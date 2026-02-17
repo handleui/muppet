@@ -1,8 +1,5 @@
 use sqlx::SqlitePool;
 
-/// Versioned migrations. Each entry is a (version, statements) pair.
-/// Statements within a version are executed in order. Versions are applied
-/// only once, tracked via the `schema_version` table.
 fn versioned_migrations() -> Vec<(i64, Vec<&'static str>)> {
     vec![
         (1, vec![
@@ -28,27 +25,24 @@ fn versioned_migrations() -> Vec<(i64, Vec<&'static str>)> {
             // and also serves as an index on conversation_id alone (leftmost prefix).
             "CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at)",
         ]),
-        // Future migrations go here as (2, vec![...]), (3, vec![...]), etc.
+        (2, vec![
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        ]),
     ]
 }
 
-/// Run all pending migrations inside a transaction per version.
-/// The schema_version table tracks which versions have been applied.
+/// Run all pending versioned migrations, each in its own transaction.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // Bootstrap the version-tracking table
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )"
-    )
-    .execute(pool)
-    .await?;
+    ensure_schema_version_table(pool).await?;
 
     for (version, statements) in versioned_migrations() {
-        // Check if this version has already been applied
         let already_applied: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version = ?)"
+            "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version = ?)",
         )
         .bind(version)
         .fetch_one(pool)
@@ -58,17 +52,37 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             continue;
         }
 
-        // Run all statements for this version in a transaction
-        let mut tx = pool.begin().await?;
-        for sql in &statements {
-            sqlx::query(sql).execute(&mut *tx).await?;
-        }
-        sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
-            .bind(version)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+        apply_migration(pool, version, &statements).await?;
     }
 
+    Ok(())
+}
+
+async fn ensure_schema_version_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn apply_migration(
+    pool: &SqlitePool,
+    version: i64,
+    statements: &[&str],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    for sql in statements {
+        sqlx::query(sql).execute(&mut *tx).await?;
+    }
+    sqlx::query("INSERT INTO schema_version (version) VALUES (?)")
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }

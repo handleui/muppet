@@ -26,6 +26,18 @@ pub enum AppError {
 
     #[error("Memory service error")]
     Supermemory(#[from] crate::supermemory::SupermemoryError),
+
+    #[error("API key not configured")]
+    ApiKeyNotConfigured,
+
+    #[error("Search request failed")]
+    ExaRequest,
+
+    #[error("Invalid API key")]
+    ExaAuth,
+
+    #[error("Rate limit exceeded, please try again later")]
+    ExaRateLimit,
 }
 
 /// Serialize only the display message so the frontend never sees internal details.
