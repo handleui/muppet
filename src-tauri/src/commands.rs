@@ -279,9 +279,10 @@ fn get_supermemory_client(app: &AppHandle) -> Result<Arc<SupermemoryClient>, App
     let state = app
         .try_state::<RwLock<Option<Arc<SupermemoryClient>>>>()
         .ok_or(AppError::SupermemoryNotConfigured)?;
-    let guard = state
-        .read()
-        .map_err(|_| AppError::SupermemoryNotConfigured)?;
+    let guard = state.read().map_err(|e| {
+        eprintln!("Supermemory RwLock poisoned (read): {e}");
+        AppError::SupermemoryNotConfigured
+    })?;
     guard
         .as_ref()
         .cloned()
@@ -302,9 +303,10 @@ pub async fn set_supermemory_api_key(
 
     let client = SupermemoryClient::new(api_key)?;
     let state = app.state::<RwLock<Option<Arc<SupermemoryClient>>>>();
-    let mut guard = state
-        .write()
-        .map_err(|_| AppError::SupermemoryNotConfigured)?;
+    let mut guard = state.write().map_err(|e| {
+        eprintln!("Supermemory RwLock poisoned (write): {e}");
+        AppError::SupermemoryNotConfigured
+    })?;
     *guard = Some(Arc::new(client));
 
     Ok(())

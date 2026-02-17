@@ -22,6 +22,15 @@ pub(crate) struct SupermemoryClient {
     api_key: String,
 }
 
+impl std::fmt::Debug for SupermemoryClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SupermemoryClient")
+            .field("http", &"<client>")
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Errors from the Supermemory API client.
 ///
 /// Display and Debug omit raw bodies and inner reqwest errors to prevent
