@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::error::AppError;
 use crate::exa::{self, ContentOptions, SearchCategory};
-use crate::supermemory::{
-    AddDocumentRequest, AddDocumentResponse, SearchRequest, SearchResponse, SupermemoryClient,
-};
+use crate::supermemory::{self, AddDocumentRequest, AddDocumentResponse, SupermemoryClient};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool};
 use tauri::{AppHandle, Manager};
@@ -34,14 +32,14 @@ pub struct Message {
 
 // ── State ──
 
-pub struct ApiKeyCache(pub Mutex<Option<String>>);
+pub struct ExaKeyCache(pub Mutex<Option<String>>);
 
 // ── Helpers ──
 
 const MAX_TITLE_LENGTH: usize = 500;
 const MAX_CONTENT_LENGTH: usize = 100_000;
 const MAX_MODEL_LENGTH: usize = 100;
-const MAX_API_KEY_LENGTH: usize = 256;
+const MAX_EXA_API_KEY_LENGTH: usize = 256;
 const DEFAULT_PAGE_SIZE: i32 = 100;
 
 const MAX_SUPERMEMORY_CONTENT_LENGTH: usize = 1_000_000;
@@ -145,8 +143,8 @@ fn get_http_client(app: &AppHandle) -> Result<&reqwest::Client, AppError> {
         .map(|state| state.inner())
 }
 
-fn get_api_key_cache(app: &AppHandle) -> Result<&ApiKeyCache, AppError> {
-    app.try_state::<ApiKeyCache>()
+fn get_exa_key_cache(app: &AppHandle) -> Result<&ExaKeyCache, AppError> {
+    app.try_state::<ExaKeyCache>()
         .ok_or(AppError::Validation("API key cache not initialized".into()))
         .map(|state| state.inner())
 }
@@ -368,13 +366,13 @@ pub async fn supermemory_search(
     q: String,
     container_tag: Option<String>,
     limit: Option<u32>,
-) -> Result<SearchResponse, AppError> {
+) -> Result<supermemory::SearchResponse, AppError> {
     validate_not_empty(&q, "Search query")?;
     validate_max_length(&q, MAX_SUPERMEMORY_QUERY_LENGTH, "Search query")?;
     validate_optional_tag(&container_tag, MAX_SUPERMEMORY_TAG_LENGTH)?;
 
     let client = get_supermemory_client(&app)?;
-    let req = SearchRequest {
+    let req = supermemory::SearchRequest {
         q,
         container_tag,
         limit: limit.map(|l| l.clamp(1, 100)),
@@ -387,14 +385,14 @@ pub async fn supermemory_search(
 // ── API Key Commands ──
 
 #[tauri::command]
-pub async fn store_api_key(app: AppHandle, key: String) -> Result<(), AppError> {
+pub async fn store_exa_api_key(app: AppHandle, key: String) -> Result<(), AppError> {
     if key.trim().is_empty() {
         return Err(AppError::Validation("API key must not be empty".into()));
     }
-    if key.len() > MAX_API_KEY_LENGTH {
+    if key.len() > MAX_EXA_API_KEY_LENGTH {
         return Err(AppError::Validation(format!(
             "API key exceeds maximum length of {} characters",
-            MAX_API_KEY_LENGTH
+            MAX_EXA_API_KEY_LENGTH
         )));
     }
 
@@ -408,7 +406,7 @@ pub async fn store_api_key(app: AppHandle, key: String) -> Result<(), AppError> 
     .execute(pool)
     .await?;
 
-    let cache = get_api_key_cache(&app)?;
+    let cache = get_exa_key_cache(&app)?;
     let mut guard = cache.0.lock().map_err(|_| AppError::Validation("Failed to acquire API key cache lock".into()))?;
     *guard = Some(key);
 
@@ -416,21 +414,21 @@ pub async fn store_api_key(app: AppHandle, key: String) -> Result<(), AppError> 
 }
 
 #[tauri::command]
-pub async fn has_api_key(app: AppHandle) -> Result<bool, AppError> {
-    let cache = get_api_key_cache(&app)?;
+pub async fn has_exa_api_key(app: AppHandle) -> Result<bool, AppError> {
+    let cache = get_exa_key_cache(&app)?;
     let guard = cache.0.lock().map_err(|_| AppError::Validation("Failed to acquire API key cache lock".into()))?;
     Ok(guard.is_some())
 }
 
 #[tauri::command]
-pub async fn delete_api_key(app: AppHandle) -> Result<(), AppError> {
+pub async fn delete_exa_api_key(app: AppHandle) -> Result<(), AppError> {
     let pool = get_pool(&app)?;
 
     sqlx::query("DELETE FROM settings WHERE key = 'exa_api_key'")
         .execute(pool)
         .await?;
 
-    let cache = get_api_key_cache(&app)?;
+    let cache = get_exa_key_cache(&app)?;
     let mut guard = cache.0.lock().map_err(|_| AppError::Validation("Failed to acquire API key cache lock".into()))?;
     *guard = None;
 
@@ -456,7 +454,7 @@ pub async fn search_web(
 
     exa::validate_search_request(&request)?;
 
-    let cache = get_api_key_cache(&app)?;
+    let cache = get_exa_key_cache(&app)?;
     let api_key = {
         let guard = cache.0.lock().map_err(|_| AppError::Validation("Failed to acquire API key cache lock".into()))?;
         guard.clone().ok_or(AppError::ApiKeyNotConfigured)?

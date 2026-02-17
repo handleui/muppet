@@ -23,11 +23,11 @@ pub fn run() {
                 .expect("failed to create app data directory");
 
             let pool = tauri::async_runtime::block_on(init_db_pool(&app_data_dir))?;
-            let cached_api_key = tauri::async_runtime::block_on(load_cached_api_key(&pool));
+            let cached_api_key = tauri::async_runtime::block_on(load_cached_exa_key(&pool));
 
             app.manage(pool);
             app.manage(reqwest::Client::new());
-            app.manage(commands::ApiKeyCache(std::sync::Mutex::new(cached_api_key)));
+            app.manage(commands::ExaKeyCache(std::sync::Mutex::new(cached_api_key)));
 
             app.manage(
                 std::sync::RwLock::new(Option::<std::sync::Arc<supermemory::SupermemoryClient>>::None),
@@ -51,9 +51,9 @@ pub fn run() {
             commands::set_supermemory_api_key,
             commands::supermemory_add,
             commands::supermemory_search,
-            commands::store_api_key,
-            commands::has_api_key,
-            commands::delete_api_key,
+            commands::store_exa_api_key,
+            commands::has_exa_api_key,
+            commands::delete_exa_api_key,
             commands::search_web,
         ])
         .run(tauri::generate_context!())
@@ -83,7 +83,7 @@ async fn init_db_pool(app_data_dir: &Path) -> Result<SqlitePool, Box<dyn std::er
     Ok(pool)
 }
 
-async fn load_cached_api_key(pool: &SqlitePool) -> Option<String> {
+async fn load_cached_exa_key(pool: &SqlitePool) -> Option<String> {
     sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'exa_api_key'")
         .fetch_optional(pool)
         .await
