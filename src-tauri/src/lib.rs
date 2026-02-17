@@ -26,6 +26,7 @@ fn get_or_create_salt(path: &std::path::Path) -> [u8; 32] {
             .open(path)
     };
 
+    // Note: no permission restriction on non-unix platforms
     #[cfg(not(unix))]
     let file = OpenOptions::new()
         .write(true)

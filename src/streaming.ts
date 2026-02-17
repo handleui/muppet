@@ -46,7 +46,10 @@ export function streamChat(
       callbacks.onToken(chunk);
     }
 
-    const usage = await result.usage;
+    const usage = await result.usage.catch(() => ({
+      inputTokens: null,
+      outputTokens: null,
+    }));
 
     await invoke("save_message", {
       conversationId,
