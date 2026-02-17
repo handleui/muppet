@@ -21,6 +21,9 @@ pub enum AppError {
     #[error("{0}")]
     Validation(String),
 
+    #[error("{0}")]
+    Internal(String),
+
     #[error("Memory service unavailable")]
     SupermemoryNotConfigured,
 
@@ -47,6 +50,7 @@ impl Serialize for AppError {
         match self {
             AppError::Database(ref inner) => eprintln!("Database error: {:?}", inner),
             AppError::Supermemory(ref inner) => eprintln!("Supermemory error: {:?}", inner),
+            AppError::Internal(ref msg) => eprintln!("Internal error: {}", msg),
             _ => {}
         }
         serializer.serialize_str(&self.to_string())
