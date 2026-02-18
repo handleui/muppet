@@ -46,6 +46,16 @@ export function clearProviderCache(): void {
   agentIdCache.clear();
 }
 
+export async function storeLettaApiKey(apiKey: string): Promise<void> {
+  await invoke("store_api_key", { provider: "letta", apiKey });
+  clearProviderCache();
+}
+
+export async function deleteLettaApiKey(): Promise<void> {
+  await invoke("delete_api_key", { provider: "letta" });
+  clearProviderCache();
+}
+
 async function resolveAgentId(
   conversationId: string,
   provider: LettaProvider
