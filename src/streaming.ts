@@ -46,7 +46,7 @@ export function streamChat(
       callbacks.onToken(chunk);
     }
 
-    const usage = await result.usage.catch(() => ({
+    const usage = await Promise.resolve(result.usage).catch(() => ({
       inputTokens: null,
       outputTokens: null,
     }));
