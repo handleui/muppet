@@ -10,8 +10,6 @@ const MAX_NUM_RESULTS: u32 = 100;
 /// Maximum response body size (5 MiB). Prevents OOM from oversized API responses.
 const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 
-// ── Request Types ──
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchRequest {
@@ -67,8 +65,6 @@ pub struct ContentOptions {
     pub text: Option<bool>,
 }
 
-// ── Response Types ──
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResponse {
@@ -88,8 +84,6 @@ pub struct SearchResult {
     pub score: Option<f64>,
     pub id: String,
 }
-
-// ── Client ──
 
 pub struct ExaClient<'a> {
     http: &'a Client,
@@ -174,7 +168,6 @@ impl<'a> ExaClient<'a> {
     }
 }
 
-/// Log transport-level errors without leaking connection details.
 fn log_transport_error(e: &reqwest::Error) {
     if e.is_timeout() {
         warn!("Exa HTTP error: request timed out");
@@ -234,8 +227,6 @@ fn redact_api_keys(s: &str) -> std::borrow::Cow<'_, str> {
     }
     std::borrow::Cow::Owned(result)
 }
-
-// ── Validation ──
 
 pub fn validate_search_request(request: &SearchRequest) -> Result<(), AppError> {
     if request.query.trim().is_empty() {

@@ -1,5 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import { streamChat, type ChatMessage } from "./streaming";
+import { streamChat } from "./streaming";
+
+declare global {
+  interface Window {
+    __muppet_invoke: typeof invoke;
+    __muppet_streamChat: (
+      conversationId: string,
+      prompt: string
+    ) => ReturnType<typeof streamChat>;
+  }
+}
 
 function setupEscapeDismiss() {
   document.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -38,16 +48,16 @@ const DEV_COMMANDS: Record<string, string[]> = {
     '__muppet_invoke("get_setting", { key: "theme" })',
   ],
   "API keys": [
-    '__muppet_invoke("store_api_key", { provider: "anthropic", apiKey: "sk-ant-..." })',
-    '__muppet_invoke("get_api_key", { provider: "anthropic" })',
+    '__muppet_invoke("store_api_key", { provider: "letta", apiKey: "..." })',
+    '__muppet_invoke("get_api_key", { provider: "letta" })',
   ],
   "Exa search": [
     '__muppet_invoke("store_exa_api_key", { key: "exa-..." })',
     '__muppet_invoke("search_web", { query: "latest AI news", numResults: 5 })',
     '__muppet_invoke("has_exa_api_key")',
   ],
-  "Streaming (AI SDK + Anthropic)": [
-    'const { promise, cancel } = __muppet_streamChat("conv-id", [{ role: "user", content: "Hello" }], "claude-haiku-4-5-20251001")',
+  "Streaming (Letta)": [
+    'const { promise, cancel } = __muppet_streamChat("conv-id", "Hello")',
     "// call cancel() to abort",
   ],
 };
@@ -63,14 +73,9 @@ function printDevHelp() {
 }
 
 function exposeDevGlobals() {
-  const w = window as unknown as Record<string, unknown>;
-  w.__muppet_invoke = invoke;
-  w.__muppet_streamChat = (
-    conversationId: string,
-    messages: ChatMessage[],
-    model: string
-  ) =>
-    streamChat(conversationId, messages, model, {
+  window.__muppet_invoke = invoke;
+  window.__muppet_streamChat = (conversationId: string, prompt: string) =>
+    streamChat(conversationId, prompt, {
       onToken: (t) => console.log("[token]", t),
       onDone: (full) => console.log("\n[done]", full.length, "chars"),
       onError: (msg) => console.error("[error]", msg),
