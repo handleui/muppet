@@ -39,6 +39,8 @@ async function getOrCreateProvider(apiKey: string): Promise<LettaProvider> {
   return provider;
 }
 
+const pendingAgentCreation = new Map<string, Promise<string>>();
+
 export function clearProviderCache(): void {
   cachedProvider = null;
   agentIdCache.clear();
@@ -53,6 +55,24 @@ async function resolveAgentId(
     return cached;
   }
 
+  const pending = pendingAgentCreation.get(conversationId);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = resolveAgentIdUncached(conversationId, provider);
+  pendingAgentCreation.set(conversationId, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingAgentCreation.delete(conversationId);
+  }
+}
+
+async function resolveAgentIdUncached(
+  conversationId: string,
+  provider: LettaProvider
+): Promise<string> {
   const conversation = await invoke<ConversationRecord>("get_conversation", {
     id: conversationId,
   });
