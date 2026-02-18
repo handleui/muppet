@@ -242,7 +242,9 @@ pub fn run() {
             commands::register_hotkey(app)?;
 
             if let Some(window) = app.get_webview_window("main") {
-                let _ = placement::apply_placement(&window, initial_mode);
+                if let Err(e) = placement::apply_placement(&window, initial_mode) {
+                    tracing::warn!(error = %e, "startup placement failed — window may not be positioned correctly");
+                }
             }
 
             Ok(())

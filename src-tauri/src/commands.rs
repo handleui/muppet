@@ -559,7 +559,7 @@ pub async fn store_exa_api_key(app: AppHandle, mut key: String) -> Result<(), Ap
     if let Some(ref mut old_key) = *guard {
         old_key.zeroize();
     }
-    *guard = Some(String::from_utf8(key_bytes.to_vec()).map_err(|_| AppError::Internal("API key is not valid UTF-8".into()))?);
+    *guard = Some(String::from_utf8(key_bytes.to_vec()).expect("key_bytes originated from a valid UTF-8 String"));
 
     info!("stored Exa API key in vault");
     Ok(())
@@ -689,12 +689,11 @@ pub async fn store_api_key(
     let client = get_vault_client(&vault)?;
 
     let store_key = format!("api_key:{}", provider);
-    let key_bytes = api_key.as_bytes().to_vec();
+    let key_bytes = zeroize::Zeroizing::new(api_key.as_bytes().to_vec());
     api_key.zeroize();
-    // Pass ownership of key_bytes to stronghold; no extra copy lingers in our stack.
     client
         .store()
-        .insert(store_key.into_bytes(), key_bytes, None)
+        .insert(store_key.into_bytes(), key_bytes.to_vec(), None)
         .map_err(|e| {
             error!(error = ?e, "failed to insert into stronghold store");
             AppError::Internal("Failed to store API key".into())
