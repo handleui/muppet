@@ -420,7 +420,7 @@ pub async fn store_exa_api_key(app: AppHandle, key: String) -> Result<(), AppErr
     let key = zeroize::Zeroizing::new(key);
     validate_non_empty_bounded(&key, MAX_EXA_API_KEY_LENGTH, "API key")?;
 
-    write_vault_key_and_update_flag(&app, b"api_key:exa", key.as_bytes().to_vec(), true, "store")?;
+    write_exa_vault_key(&app, b"api_key:exa", key.as_bytes().to_vec(), true, "store")?;
 
     info!("stored exa API key in vault");
     Ok(())
@@ -436,7 +436,7 @@ pub async fn has_exa_api_key(app: AppHandle) -> Result<bool, AppError> {
 #[tauri::command]
 #[instrument(skip(app))]
 pub async fn delete_exa_api_key(app: AppHandle) -> Result<(), AppError> {
-    write_vault_key_and_update_flag(&app, b"api_key:exa", Vec::new(), false, "delete")?;
+    write_exa_vault_key(&app, b"api_key:exa", Vec::new(), false, "delete")?;
 
     info!("deleted exa API key from vault");
     Ok(())
@@ -497,7 +497,7 @@ fn commit_vault(vault: &ApiKeyVault) -> Result<(), AppError> {
         })
 }
 
-fn write_vault_key_and_update_flag(
+fn write_exa_vault_key(
     app: &AppHandle,
     store_key: &[u8],
     value: Vec<u8>,
