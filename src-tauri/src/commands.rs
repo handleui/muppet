@@ -617,7 +617,8 @@ pub async fn store_api_key(
         let client = get_vault_client(&vault)?;
 
         let store_key = format!("api_key:{}", provider);
-        let key_bytes = std::mem::take(&mut api_key).into_bytes();
+        let key_bytes = api_key.as_bytes().to_vec();
+        api_key.zeroize();
         let insert_result = client
             .store()
             .insert(store_key.into_bytes(), key_bytes, None);
@@ -632,7 +633,6 @@ pub async fn store_api_key(
         Ok(())
     })();
 
-    api_key.zeroize();
     result
 }
 

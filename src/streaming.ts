@@ -61,8 +61,18 @@ export function streamChat(
     });
 
     callbacks.onDone?.(fullContent, model);
-  })().catch((err) => {
+  })().catch(async (err) => {
     if (err.name === "AbortError") {
+      if (fullContent) {
+        await invoke("save_message", {
+          conversationId,
+          role: "assistant",
+          content: fullContent,
+          model,
+          tokensIn: null,
+          tokensOut: null,
+        }).catch(() => {});
+      }
       callbacks.onDone?.(fullContent, model);
       return;
     }
