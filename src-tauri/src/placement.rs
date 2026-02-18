@@ -128,7 +128,10 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), AppError> {
     std::fs::write(&temp_path, content)
         .map_err(|e| AppError::Placement(format!("Failed to write temp state file: {}", e)))?;
     std::fs::rename(&temp_path, path)
-        .map_err(|e| AppError::Placement(format!("Failed to finalize state file: {}", e)))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            AppError::Placement(format!("Failed to finalize state file: {}", e))
+        })
 }
 
 pub fn save_state(state: &PlacementState) -> Result<(), AppError> {

@@ -811,19 +811,6 @@ fn show_and_focus(window: &tauri::WebviewWindow) {
     let _ = window.set_focus();
 }
 
-fn set_mode(app_handle: &AppHandle, mode: PlacementMode) {
-    let Some(window) = get_main_window(app_handle) else { return };
-    let Some(state) = app_handle.try_state::<PlacementState>() else { return };
-
-    if let Err(e) = placement::apply_placement(&window, mode) {
-        error!(error = %e, "failed to apply placement");
-        return;
-    }
-    if let Ok(mut guard) = state.mode.lock() {
-        *guard = mode;
-    }
-    placement::save_state_async(&state);
-}
 
 fn summon(app_handle: &AppHandle) {
     let Some(window) = get_main_window(app_handle) else { return };
@@ -860,11 +847,16 @@ fn set_mode_if_visible(app_handle: &AppHandle, mode: PlacementMode) {
     if !window.is_visible().unwrap_or(false) { return };
 
     let Some(state) = app_handle.try_state::<PlacementState>() else { return };
-    if let Ok(guard) = state.mode.lock() {
-        if *guard == mode { return; } // Skip if already in this mode
-    }
+    let Ok(mut guard) = state.mode.lock() else { return };
+    if *guard == mode { return; }
 
-    set_mode(app_handle, mode);
+    if let Err(e) = placement::apply_placement(&window, mode) {
+        error!(error = %e, "failed to apply placement");
+        return;
+    }
+    *guard = mode;
+    drop(guard);
+    placement::save_state_async(&state);
 }
 
 const PLACEMENT_HOTKEYS: &[(&str, PlacementMode)] = &[
