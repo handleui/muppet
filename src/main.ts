@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import { streamChat } from "./streaming";
+import { streamChat, type ChatMessage } from "./streaming";
 
 declare global {
   interface Window {
     __muppet_invoke: typeof invoke;
     __muppet_streamChat: (
       conversationId: string,
-      prompt: string
+      messages: ChatMessage[],
+      model: string
     ) => ReturnType<typeof streamChat>;
   }
 }
@@ -48,8 +49,8 @@ const DEV_COMMANDS: Record<string, string[]> = {
     '__muppet_invoke("get_setting", { key: "theme" })',
   ],
   "API keys": [
-    '__muppet_invoke("store_api_key", { provider: "letta", apiKey: "..." })',
-    '__muppet_invoke("get_api_key", { provider: "letta" })',
+    '__muppet_invoke("store_api_key", { provider: "anthropic", apiKey: "..." })',
+    '__muppet_invoke("get_api_key", { provider: "anthropic" })',
   ],
   "Exa search": [
     '__muppet_invoke("store_exa_api_key", { key: "exa-..." })',
@@ -64,8 +65,13 @@ const DEV_COMMANDS: Record<string, string[]> = {
     '__muppet_invoke("generate_image", { prompt: "sunset", model: "fal-ai/flux/dev", imageSize: "landscape_16_9" })',
     '__muppet_invoke("list_generations")',
   ],
-  "Streaming (Letta)": [
-    'const { promise, cancel } = __muppet_streamChat("conv-id", "Hello")',
+  "MCP servers": [
+    '__muppet_invoke("add_mcp_server", { name: "test", url: "https://example.com/mcp", authType: "none" })',
+    '__muppet_invoke("list_mcp_servers")',
+    '__muppet_invoke("delete_mcp_server", { id: "..." })',
+  ],
+  "Streaming (Anthropic + MCP tools)": [
+    'const { promise, cancel } = __muppet_streamChat("conv-id", [{ role: "user", content: "Hello" }], "claude-sonnet-4-20250514")',
     "// call cancel() to abort",
   ],
 };
@@ -82,8 +88,12 @@ function printDevHelp() {
 
 function exposeDevGlobals() {
   window.__muppet_invoke = invoke;
-  window.__muppet_streamChat = (conversationId: string, prompt: string) =>
-    streamChat(conversationId, prompt, {
+  window.__muppet_streamChat = (
+    conversationId: string,
+    messages: ChatMessage[],
+    model: string
+  ) =>
+    streamChat(conversationId, messages, model, {
       onToken: (t) => console.log("[token]", t),
       onDone: (full) => console.log("\n[done]", full.length, "chars"),
       onError: (msg) => console.error("[error]", msg),

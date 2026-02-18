@@ -77,6 +77,17 @@ fn versioned_migrations() -> Vec<(i64, Vec<&'static str>)> {
             "CREATE INDEX IF NOT EXISTS idx_generations_created ON generations(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_generations_conv_created ON generations(conversation_id, created_at)",
         ]),
+        (7, vec![
+            "CREATE TABLE IF NOT EXISTS mcp_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                auth_type TEXT NOT NULL DEFAULT 'none' CHECK (auth_type IN ('none', 'api_key', 'oauth')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_name ON mcp_servers(name)",
+        ]),
     ]
 }
 
