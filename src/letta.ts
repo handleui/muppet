@@ -3,7 +3,6 @@ import {
   type LettaProvider,
 } from "@letta-ai/vercel-ai-sdk-provider";
 import { invoke } from "@tauri-apps/api/core";
-import { clearProviderCache } from "./streaming";
 
 const LETTA_PROVIDER = "letta";
 
@@ -13,12 +12,7 @@ const DEFAULT_PERSONA =
   "I am Muppet, a helpful AI assistant. I remember our conversations and learn your preferences over time.";
 const DEFAULT_HUMAN = "The user has not shared personal details yet.";
 
-let cachedApiKey: string | null = null;
-
 export async function getLettaApiKey(): Promise<string> {
-  if (cachedApiKey) {
-    return cachedApiKey;
-  }
   const apiKey = await invoke<string | null>("get_api_key", {
     provider: LETTA_PROVIDER,
   });
@@ -27,13 +21,7 @@ export async function getLettaApiKey(): Promise<string> {
       "Letta API key not configured. Use store_api_key with provider 'letta' to set it."
     );
   }
-  cachedApiKey = apiKey;
   return apiKey;
-}
-
-export function clearLettaApiKeyCache(): void {
-  cachedApiKey = null;
-  clearProviderCache();
 }
 
 export function createLettaProvider(apiKey: string): LettaProvider {

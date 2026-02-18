@@ -31,7 +31,8 @@ pub struct Message {
     pub created_at: String,
 }
 
-pub struct ExaKeyCache(pub Mutex<Option<String>>);
+/// Tracks whether an Exa API key exists in the vault without holding the raw secret.
+pub struct ExaKeyPresent(pub Mutex<bool>);
 
 const MAX_TITLE_LENGTH: usize = 500;
 const MAX_CONTENT_LENGTH: usize = 100_000;
@@ -155,19 +156,19 @@ fn get_http_client(app: &AppHandle) -> Result<&reqwest::Client, AppError> {
         .map(|state| state.inner())
 }
 
-fn get_exa_key_cache(app: &AppHandle) -> Result<&ExaKeyCache, AppError> {
-    app.try_state::<ExaKeyCache>()
-        .ok_or(AppError::Validation("API key cache not initialized".into()))
+fn get_exa_key_flag(app: &AppHandle) -> Result<&ExaKeyPresent, AppError> {
+    app.try_state::<ExaKeyPresent>()
+        .ok_or(AppError::Validation("API key presence flag not initialized".into()))
         .map(|state| state.inner())
 }
 
-fn lock_exa_cache(
-    cache: &ExaKeyCache,
-) -> Result<std::sync::MutexGuard<'_, Option<String>>, AppError> {
-    cache
+fn lock_exa_flag(
+    flag: &ExaKeyPresent,
+) -> Result<std::sync::MutexGuard<'_, bool>, AppError> {
+    flag
         .0
         .lock()
-        .map_err(|_| AppError::Validation("Failed to acquire API key cache lock".into()))
+        .map_err(|_| AppError::Validation("Failed to acquire API key flag lock".into()))
 }
 
 fn get_vault(app: &AppHandle) -> Result<&Mutex<ApiKeyVault>, AppError> {
@@ -414,45 +415,30 @@ pub async fn set_conversation_agent_id(
 }
 
 #[tauri::command]
+#[instrument(skip(app, key))]
 pub async fn store_exa_api_key(app: AppHandle, key: String) -> Result<(), AppError> {
+    let key = zeroize::Zeroizing::new(key);
     validate_non_empty_bounded(&key, MAX_EXA_API_KEY_LENGTH, "API key")?;
 
-    let pool = get_pool(&app)?;
+    write_vault_key_and_update_flag(&app, b"api_key:exa", key.as_bytes().to_vec(), true, "store")?;
 
-    sqlx::query(
-        "INSERT INTO settings (key, value) VALUES ('exa_api_key', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
-    )
-    .bind(&key)
-    .execute(pool)
-    .await?;
-
-    let cache = get_exa_key_cache(&app)?;
-    let mut guard = lock_exa_cache(cache)?;
-    *guard = Some(key);
-
+    info!("stored exa API key in vault");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn has_exa_api_key(app: AppHandle) -> Result<bool, AppError> {
-    let cache = get_exa_key_cache(&app)?;
-    let guard = lock_exa_cache(cache)?;
-    Ok(guard.is_some())
+    let flag = get_exa_key_flag(&app)?;
+    let guard = lock_exa_flag(flag)?;
+    Ok(*guard)
 }
 
 #[tauri::command]
+#[instrument(skip(app))]
 pub async fn delete_exa_api_key(app: AppHandle) -> Result<(), AppError> {
-    let pool = get_pool(&app)?;
+    write_vault_key_and_update_flag(&app, b"api_key:exa", Vec::new(), false, "delete")?;
 
-    sqlx::query("DELETE FROM settings WHERE key = 'exa_api_key'")
-        .execute(pool)
-        .await?;
-
-    let cache = get_exa_key_cache(&app)?;
-    let mut guard = lock_exa_cache(cache)?;
-    *guard = None;
-
+    info!("deleted exa API key from vault");
     Ok(())
 }
 
@@ -473,16 +459,14 @@ pub async fn search_web(
 
     exa::validate_search_request(&request)?;
 
-    let cache = get_exa_key_cache(&app)?;
-    let api_key = {
-        let guard = lock_exa_cache(cache)?;
-        guard.as_ref().ok_or(AppError::ApiKeyNotConfigured)?.clone()
-    };
+    let mut api_key = read_vault_key(&app, b"api_key:exa")?;
 
     let http = get_http_client(&app)?;
-    let client = exa::ExaClient::new(http, &api_key);
+    let exa = exa::ExaClient::new(http, &api_key);
+    let result = exa.search(&request).await;
 
-    client.search(&request).await
+    api_key.zeroize();
+    result
 }
 
 fn get_vault_client(
@@ -511,6 +495,58 @@ fn commit_vault(vault: &ApiKeyVault) -> Result<(), AppError> {
             error!(error = ?e, "failed to commit stronghold snapshot");
             AppError::Internal("Failed to persist API key".into())
         })
+}
+
+fn write_vault_key_and_update_flag(
+    app: &AppHandle,
+    store_key: &[u8],
+    value: Vec<u8>,
+    flag_value: bool,
+    op_name: &str,
+) -> Result<(), AppError> {
+    let vault_state = get_vault(app)?;
+    let vault = lock_vault(vault_state)?;
+    let client = get_vault_client(&vault)?;
+
+    client
+        .store()
+        .insert(store_key.to_vec(), value, None)
+        .map_err(|e| {
+            error!(error = ?e, "failed to {} key in stronghold store", op_name);
+            AppError::Internal(format!("Failed to {} API key", op_name))
+        })?;
+
+    commit_vault(&vault)?;
+
+    let flag = get_exa_key_flag(app)?;
+    let mut guard = lock_exa_flag(flag)?;
+    *guard = flag_value;
+
+    Ok(())
+}
+
+fn read_vault_key(app: &AppHandle, store_key: &[u8]) -> Result<String, AppError> {
+    let vault_state = get_vault(app)?;
+    let vault = lock_vault(vault_state)?;
+    let client = get_vault_client(&vault)?;
+
+    let data = client
+        .store()
+        .get(store_key)
+        .map_err(|e| {
+            error!(error = ?e, "failed to read key from stronghold store");
+            AppError::Internal("Failed to retrieve API key".into())
+        })?;
+
+    let key_bytes = data
+        .filter(|b| !b.is_empty())
+        .ok_or(AppError::ApiKeyNotConfigured)?;
+
+    String::from_utf8(key_bytes).map_err(|e| {
+        let mut bad = e.into_bytes();
+        bad.zeroize();
+        AppError::Internal("Corrupted API key data".into())
+    })
 }
 
 #[tauri::command]
@@ -567,7 +603,7 @@ pub async fn get_api_key(
             AppError::Internal("Failed to retrieve API key".into())
         })?;
 
-    let Some(bytes) = data else {
+    let Some(bytes) = data.filter(|b| !b.is_empty()) else {
         return Ok(None);
     };
 

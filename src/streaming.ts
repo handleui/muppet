@@ -23,34 +23,44 @@ interface ConversationRecord {
   letta_agent_id: string | null;
 }
 
-let cachedProvider: { apiKey: string; provider: LettaProvider } | null = null;
+let cachedProvider: { key: string; provider: LettaProvider } | null = null;
+const agentIdCache = new Map<string, string>();
 
 function getOrCreateProvider(apiKey: string): LettaProvider {
-  if (cachedProvider?.apiKey === apiKey) {
+  if (cachedProvider?.key === apiKey) {
     return cachedProvider.provider;
   }
   const provider = createLettaProvider(apiKey);
-  cachedProvider = { apiKey, provider };
+  cachedProvider = { key: apiKey, provider };
   return provider;
 }
 
 export function clearProviderCache(): void {
   cachedProvider = null;
+  agentIdCache.clear();
 }
 
 async function resolveAgentId(
   conversationId: string,
   provider: LettaProvider
 ): Promise<string> {
+  const cached = agentIdCache.get(conversationId);
+  if (cached) {
+    return cached;
+  }
+
   const conversation = await invoke<ConversationRecord>("get_conversation", {
     id: conversationId,
   });
 
   if (conversation.letta_agent_id) {
+    agentIdCache.set(conversationId, conversation.letta_agent_id);
     return conversation.letta_agent_id;
   }
 
-  return createAgentForConversation(provider, conversationId);
+  const agentId = await createAgentForConversation(provider, conversationId);
+  agentIdCache.set(conversationId, agentId);
+  return agentId;
 }
 
 function saveAssistantMessage(
@@ -67,32 +77,19 @@ function saveAssistantMessage(
   });
 }
 
-function redactTokens(message: string): string {
-  const patterns: [RegExp, string][] = [
-    [
-      /\b(sk-ant-|sk-|letta-|exa-|xai-|key-)[A-Za-z0-9_-]{10,}\b/g,
-      "[REDACTED]",
-    ],
-    [/\bBearer\s+[A-Za-z0-9_\-.]{10,}\b/g, "[REDACTED]"],
-    [
-      /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-      "[REDACTED]",
-    ],
-  ];
+const REDACT_PATTERNS: RegExp[] = [
+  /\b(sk[-_]ant[-_]|sk[-_]|letta[-_]|exa[-_]|xai[-_]|key[-_])[A-Za-z0-9_-]{10,}\b/g,
+  /\b(Bearer|Basic|Token)\s+[A-Za-z0-9_\-./+=]{10,}\b/g,
+  /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+];
 
+function redactTokens(message: string): string {
   let safe = message;
-  for (const [pattern, replacement] of patterns) {
-    safe = safe.replace(pattern, replacement);
+  for (const pattern of REDACT_PATTERNS) {
+    pattern.lastIndex = 0; // Reset stateful /g flag before each use
+    safe = safe.replace(pattern, "[REDACTED]");
   }
   return safe;
-}
-
-interface StreamAccumulator {
-  chunks: string[];
-}
-
-function joinAccumulator(accumulator: StreamAccumulator): string {
-  return accumulator.chunks.join("");
 }
 
 async function executeStream(
@@ -100,7 +97,7 @@ async function executeStream(
   messages: ChatMessage[],
   callbacks: StreamCallbacks,
   abortSignal: AbortSignal,
-  accumulator: StreamAccumulator
+  chunks: string[]
 ): Promise<void> {
   const apiKey = await getLettaApiKey();
   const letta = getOrCreateProvider(apiKey);
@@ -121,11 +118,11 @@ async function executeStream(
   });
 
   for await (const chunk of result.textStream) {
-    accumulator.chunks.push(chunk);
+    chunks.push(chunk);
     callbacks.onToken(chunk);
   }
 
-  const fullContent = joinAccumulator(accumulator);
+  const fullContent = chunks.join("");
   await saveAssistantMessage(conversationId, fullContent);
   callbacks.onDone?.(fullContent);
 }
@@ -133,14 +130,14 @@ async function executeStream(
 async function handleStreamError(
   err: unknown,
   conversationId: string,
-  accumulator: StreamAccumulator,
+  chunks: string[],
   callbacks: StreamCallbacks
 ): Promise<void> {
   if (err instanceof Error && err.name === "AbortError") {
-    const fullContent = joinAccumulator(accumulator);
+    const fullContent = chunks.join("");
     if (fullContent) {
       await saveAssistantMessage(conversationId, fullContent).catch(() => {
-        // Best-effort save on abort; swallow errors to avoid masking the abort.
+        // Best-effort save on abort
       });
     }
     callbacks.onDone?.(fullContent);
@@ -157,17 +154,15 @@ export function streamChat(
   callbacks: StreamCallbacks
 ): { promise: Promise<void>; cancel: () => void } {
   const abortController = new AbortController();
-  const accumulator: StreamAccumulator = { chunks: [] };
+  const chunks: string[] = [];
 
   const promise = executeStream(
     conversationId,
     messages,
     callbacks,
     abortController.signal,
-    accumulator
-  ).catch((err) =>
-    handleStreamError(err, conversationId, accumulator, callbacks)
-  );
+    chunks
+  ).catch((err) => handleStreamError(err, conversationId, chunks, callbacks));
 
   return {
     promise,

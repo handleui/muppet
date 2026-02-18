@@ -8,8 +8,6 @@ const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const MAX_QUERY_LENGTH: usize = 2_000;
 const MAX_NUM_RESULTS: u32 = 100;
 
-// ── Request Types ──
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchRequest {
@@ -65,8 +63,6 @@ pub struct ContentOptions {
     pub text: Option<bool>,
 }
 
-// ── Response Types ──
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResponse {
@@ -86,8 +82,6 @@ pub struct SearchResult {
     pub score: Option<f64>,
     pub id: String,
 }
-
-// ── Client ──
 
 pub struct ExaClient<'a> {
     http: &'a Client,
@@ -148,7 +142,6 @@ impl<'a> ExaClient<'a> {
     }
 }
 
-/// Log transport-level errors without leaking connection details.
 fn log_transport_error(e: &reqwest::Error) {
     if e.is_timeout() {
         error!("exa HTTP error: request timed out");
@@ -161,8 +154,6 @@ fn log_transport_error(e: &reqwest::Error) {
         );
     }
 }
-
-// ── Validation ──
 
 pub fn validate_search_request(request: &SearchRequest) -> Result<(), AppError> {
     if request.query.trim().is_empty() {

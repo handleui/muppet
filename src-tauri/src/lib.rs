@@ -200,12 +200,16 @@ async fn init_db_pool(app_data_dir: &Path) -> Result<SqlitePool, Box<dyn std::er
     Ok(pool)
 }
 
-async fn load_cached_exa_key(pool: &SqlitePool) -> Option<String> {
-    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'exa_api_key'")
-        .fetch_optional(pool)
-        .await
+fn vault_has_key(vault: &vault::ApiKeyVault, key: &[u8]) -> bool {
+    let Ok(client) = vault.stronghold.get_client(b"api-keys") else {
+        return false;
+    };
+    client
+        .store()
+        .get(key)
         .ok()
         .flatten()
+        .is_some_and(|v| !v.is_empty())
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -217,16 +221,18 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     ensure_app_data_dir(&app_data_dir);
 
     let pool = tauri::async_runtime::block_on(init_db_pool(&app_data_dir))?;
-    let cached_api_key = tauri::async_runtime::block_on(load_cached_exa_key(&pool));
 
     app.manage(pool);
     app.manage(reqwest::Client::new());
-    app.manage(commands::ExaKeyCache(std::sync::Mutex::new(cached_api_key)));
 
     let salt = get_or_create_salt(&app_data_dir.join("salt.txt"));
     init_stronghold_plugin(app.handle(), salt)?;
 
     let api_vault = init_api_key_vault(&app_data_dir, &salt);
+
+    let exa_key_present = vault_has_key(&api_vault, b"api_key:exa");
+    app.manage(commands::ExaKeyPresent(std::sync::Mutex::new(exa_key_present)));
+
     app.manage(std::sync::Mutex::new(api_vault));
 
     commands::register_hotkey(app)?;
