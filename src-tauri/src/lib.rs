@@ -26,7 +26,8 @@ fn get_or_create_salt(path: &std::path::Path) -> [u8; 32] {
             .open(path)
     };
 
-    // Note: no permission restriction on non-unix platforms
+    // Windows: no owner-only restriction available via OpenOptions.
+    // The file is set to read-only after creation (see below).
     #[cfg(not(unix))]
     let file = OpenOptions::new()
         .write(true)
@@ -39,6 +40,20 @@ fn get_or_create_salt(path: &std::path::Path) -> [u8; 32] {
             getrandom::getrandom(&mut salt).expect("failed to generate random salt");
             file.write_all(&salt).expect("failed to write salt file");
             file.sync_all().expect("failed to sync salt file to disk");
+
+            #[cfg(not(unix))]
+            {
+                tracing::warn!(
+                    "non-unix platform: salt file lacks owner-only permissions, setting read-only"
+                );
+                let mut perms = std::fs::metadata(path)
+                    .expect("failed to read salt file metadata")
+                    .permissions();
+                perms.set_readonly(true);
+                std::fs::set_permissions(path, perms)
+                    .expect("failed to set salt file read-only");
+            }
+
             salt
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {

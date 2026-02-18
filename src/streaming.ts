@@ -21,6 +21,8 @@ export function streamChat(
 ): { promise: Promise<void>; cancel: () => void } {
   const abortController = new AbortController();
 
+  let fullContent = "";
+
   const promise = (async () => {
     const apiKey = await invoke<string | null>("get_api_key", {
       provider: "anthropic",
@@ -39,8 +41,6 @@ export function streamChat(
       maxOutputTokens: 4096,
       abortSignal: abortController.signal,
     });
-
-    let fullContent = "";
     for await (const chunk of result.textStream) {
       fullContent += chunk;
       callbacks.onToken(chunk);
@@ -62,7 +62,10 @@ export function streamChat(
 
     callbacks.onDone?.(fullContent, model);
   })().catch((err) => {
-    if (err.name === "AbortError") return;
+    if (err.name === "AbortError") {
+      callbacks.onDone?.(fullContent, model);
+      return;
+    }
     // Sanitize error messages to prevent accidental API key leakage.
     // SDK/HTTP errors may include headers or URLs containing the key.
     const raw = err.message ?? "Stream failed";
