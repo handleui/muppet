@@ -834,9 +834,8 @@ fn summon(app_handle: &AppHandle) {
 
     if !was_visible {
         reapply_current_placement(app_handle, &window);
+        let _ = window.emit("new_thread", ());
     }
-
-    let _ = window.emit("new_thread", ());
 }
 
 fn reapply_current_placement(app_handle: &AppHandle, window: &tauri::WebviewWindow) {
