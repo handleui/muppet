@@ -10,18 +10,13 @@ const COMPACT_WIDTH: f64 = 400.0;
 const COMPACT_HEIGHT: f64 = 500.0;
 const MENU_BAR_HEIGHT: f64 = 25.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlacementMode {
+    #[default]
     Center,
     Compact,
     SidebarLeft,
     SidebarRight,
-}
-
-impl Default for PlacementMode {
-    fn default() -> Self {
-        Self::Center
-    }
 }
 
 pub struct PlacementState {
@@ -128,7 +123,11 @@ pub fn load_state(path: &Path) -> PlacementMode {
 }
 
 fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
-    let temp_path = format!("{}.tmp", path.display());
+    let dir = path.parent()
+        .ok_or_else(|| "State file path has no parent directory".to_string())?;
+    let temp_path = dir.join(
+        format!(".{}.tmp", path.file_name().unwrap_or_default().to_string_lossy()),
+    );
     std::fs::write(&temp_path, content)
         .map_err(|e| format!("Failed to write temp state file: {}", e))?;
     std::fs::rename(&temp_path, path)

@@ -14,24 +14,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
 
       # PR: only check changed packages (the tweet trick)
       - name: Check types & build (PR)
         if: github.event_name == 'pull_request'
-        run: turbo run check-types build --affected
+        run: bun run turbo run check-types build --affected
 
       # Main: full validation
       - name: Check types & build (main)
         if: github.ref == 'refs/heads/main'
-        run: turbo run check-types build
+        run: bun run turbo run check-types build
 
   rust:
     runs-on: ubuntu-latest
