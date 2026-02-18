@@ -101,7 +101,12 @@ export function createMuppetOAuthProvider(
     },
 
     redirectToAuthorization(authorizationUrl: URL): void {
-      window.open(authorizationUrl.toString(), "_blank");
+      const popup = window.open(authorizationUrl.toString(), "_blank");
+      if (!popup) {
+        throw new Error(
+          "Failed to open OAuth authorization window — popup may be blocked"
+        );
+      }
     },
 
     async saveCodeVerifier(codeVerifier: string): Promise<void> {

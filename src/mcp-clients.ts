@@ -35,6 +35,8 @@ function generateOAuthState(): string {
     .replace(/=/g, "");
 }
 
+const OAUTH_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes, matches Rust server timeout
+
 async function waitForOAuthCode(expectedState: string): Promise<string> {
   let resolveOuter!: (code: string) => void;
   let rejectOuter!: (err: Error) => void;
@@ -46,8 +48,6 @@ async function waitForOAuthCode(expectedState: string): Promise<string> {
 
   const [unlistenCode, unlistenError] = await Promise.all([
     listen<OAuthCodePayload>("mcp-oauth-code", (event) => {
-      unlistenCode?.();
-      unlistenError?.();
       if (event.payload.state !== expectedState) {
         rejectOuter(new Error("OAuth state mismatch — possible CSRF attempt"));
         return;
@@ -55,13 +55,20 @@ async function waitForOAuthCode(expectedState: string): Promise<string> {
       resolveOuter(event.payload.code);
     }),
     listen<string>("mcp-oauth-error", (event) => {
-      unlistenCode?.();
-      unlistenError?.();
       rejectOuter(new Error(event.payload));
     }),
   ]);
 
-  return result;
+  const cleanup = () => {
+    unlistenCode();
+    unlistenError();
+  };
+
+  const timeout = new Promise<never>((_, rej) => {
+    setTimeout(() => rej(new Error("OAuth flow timed out")), OAUTH_TIMEOUT_MS);
+  });
+
+  return Promise.race([result, timeout]).finally(cleanup);
 }
 
 async function connectWithApiKey(server: McpServer): Promise<MCPClient> {
@@ -83,21 +90,26 @@ async function connectWithApiKey(server: McpServer): Promise<MCPClient> {
 async function connectWithOAuth(server: McpServer): Promise<MCPClient> {
   const authProvider = createMuppetOAuthProvider(server.id);
 
-  // Try connecting with cached/refreshed tokens first — no callback server needed
-  try {
-    return await createMCPClient({
-      transport: { type: "http", url: server.url, authProvider },
-    });
-  } catch (err) {
-    if (!(err instanceof UnauthorizedError)) {
-      throw err;
+  // Try with cached tokens first — skip OAuth flow if still valid
+  const cachedTokens = await authProvider.tokens();
+  if (cachedTokens) {
+    try {
+      return await createMCPClient({
+        transport: { type: "http", url: server.url, authProvider },
+      });
+    } catch (err) {
+      if (!(err instanceof UnauthorizedError)) {
+        throw err;
+      }
+      // Cached tokens expired/revoked — fall through to full OAuth flow
     }
   }
 
-  // Cached tokens didn't work — start the OAuth callback server now
+  // Start callback server only when OAuth is actually needed
   const oauthState = generateOAuthState();
   const port = await invoke<number>("start_oauth_callback_server", {
     expectedState: oauthState,
+    serverId: server.id,
   });
   authProvider.updateRedirectUrl(`http://127.0.0.1:${port}/oauth/callback`);
 

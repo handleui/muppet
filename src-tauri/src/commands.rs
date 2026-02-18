@@ -1329,6 +1329,7 @@ pub async fn start_oauth_callback_server(
         crate::oauth_callback::start_callback_server(app.clone(), 300, expected_state)
             .map_err(AppError::Internal)?;
 
+    // Track session by server ID so it can be shut down when the server is deleted
     if let Some(id) = server_id {
         if let Ok(mut map) = app.state::<OAuthSessions>().0.lock() {
             map.insert(id, handle);

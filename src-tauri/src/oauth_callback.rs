@@ -9,7 +9,8 @@ pub struct OAuthCodePayload {
     pub state: String,
 }
 
-/// Handle that allows the caller to request an early shutdown of the callback server.
+/// Handle returned from `start_callback_server` to allow early shutdown.
+#[derive(Clone)]
 pub struct OAuthSessionHandle {
     shutdown: Arc<AtomicBool>,
 }
@@ -26,8 +27,9 @@ const SUCCESS_HTML: &str = "<html><body><h1>Authorization successful</h1>\
                             </body></html>";
 
 /// Starts a temporary localhost HTTP server on a random port, returning the port
-/// and a handle for early shutdown. A background thread waits for the OAuth
-/// callback and emits the authorization code via the Tauri event system.
+/// and a handle that can be used to shut down the server early. A background
+/// thread waits for the OAuth callback and emits the authorization code via the
+/// Tauri event system.
 pub fn start_callback_server(
     app: tauri::AppHandle,
     timeout_secs: u64,
