@@ -72,7 +72,7 @@ fn versioned_migrations() -> Vec<(i64, Vec<&'static str>)> {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
             )",
-            "INSERT INTO generations SELECT id, conversation_id, model, prompt, image_url, width, height, CAST(seed AS TEXT), inference_time_ms, created_at FROM generations_old",
+            "INSERT INTO generations SELECT id, conversation_id, model, prompt, image_url, width, height, CASE WHEN seed IS NOT NULL THEN CAST(seed AS TEXT) END, inference_time_ms, created_at FROM generations_old",
             "DROP TABLE generations_old",
             "CREATE INDEX IF NOT EXISTS idx_generations_created ON generations(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_generations_conv_created ON generations(conversation_id, created_at)",

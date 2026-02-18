@@ -102,6 +102,16 @@ impl SecretStore {
     /// Remove the secret stored under `key`. No-ops if the key does not exist.
     pub fn remove(&self, key: &str) -> Result<(), AppError> {
         let (_guard, client) = self.locked_client()?;
+        // Check whether the key exists before deleting — the underlying
+        // Stronghold store returns an error when deleting a missing key,
+        // but callers expect a silent no-op in that case.
+        match client.store().get(key.as_bytes()) {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                return Err(AppError::SecretStore(format!("store get (pre-delete): {e}")));
+            }
+        }
         client
             .store()
             .delete(key.as_bytes())
