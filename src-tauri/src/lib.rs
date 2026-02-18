@@ -1,8 +1,10 @@
+mod arcade;
 mod commands;
 mod db;
 mod error;
 mod exa;
 mod placement;
+mod util;
 mod vault;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -11,6 +13,7 @@ use std::path::Path;
 use tauri::Manager;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
+use zeroize::{Zeroize, Zeroizing};
 
 fn open_new_salt_file(path: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
     use std::fs::OpenOptions;
@@ -205,12 +208,13 @@ fn vault_has_key(vault: &vault::ApiKeyVault, key: &[u8]) -> bool {
     let Ok(client) = vault.stronghold.get_client(b"api-keys") else {
         return false;
     };
-    client
-        .store()
-        .get(key)
-        .ok()
-        .flatten()
-        .is_some_and(|v| !v.is_empty())
+    let mut data = match client.store().get(key).ok().flatten() {
+        Some(d) => d,
+        None => return false,
+    };
+    let present = !data.is_empty();
+    data.zeroize();
+    present
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -223,7 +227,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = tauri::async_runtime::block_on(init_db_pool(&app_data_dir))?;
 
-    app.manage(pool);
     app.manage(
         reqwest::Client::builder()
             .user_agent("muppet/0.1.0")
@@ -242,7 +245,12 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(commands::ExaKeyPresent(std::sync::Mutex::new(exa_key_present)));
     app.manage(commands::SearchRateLimiter(std::sync::Mutex::new(None)));
 
+    let arcade_client =
+        tauri::async_runtime::block_on(load_arcade_client(&pool, &api_vault));
+
+    app.manage(pool);
     app.manage(std::sync::Mutex::new(api_vault));
+    app.manage(std::sync::RwLock::new(arcade_client));
 
     let placement_file = app_data_dir.join("placement.json");
     let initial_mode = placement::load_state(&placement_file);
@@ -262,12 +270,61 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn load_arcade_client(
+    pool: &SqlitePool,
+    vault: &vault::ApiKeyVault,
+) -> Option<std::sync::Arc<arcade::ArcadeClient>> {
+    // Load API key from the encrypted vault
+    let api_key = {
+        let client = vault.stronghold.get_client(b"api-keys").ok()?;
+        let mut data = client.store().get(b"arcade_api_key").ok()??;
+        let key = String::from_utf8(data.clone()).ok().map(Zeroizing::new);
+        data.zeroize();
+        key
+    }?;
+
+    // Load non-secret config from settings
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM settings WHERE key IN ('arcade_user_id', 'arcade_base_url')",
+    )
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    let mut user_id = None;
+    let mut base_url = None;
+
+    for (key, value) in rows {
+        match key.as_str() {
+            "arcade_user_id" => user_id = Some(value),
+            "arcade_base_url" => base_url = Some(value),
+            _ => {}
+        }
+    }
+
+    // Re-validate the stored base_url at startup to guard against DB corruption
+    // or URLs stored by an older version that lacked validation.
+    if let Some(ref url) = base_url {
+        if commands::validate_base_url(url).is_err() {
+            eprintln!("Stored arcade_base_url failed validation, ignoring saved config");
+            return None;
+        }
+    }
+
+    user_id.and_then(|uid| {
+        arcade::ArcadeClient::new((*api_key).clone(), uid, base_url)
+            .ok()
+            .map(std::sync::Arc::new)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
     tracing::info!("starting muppet");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
@@ -292,6 +349,13 @@ pub fn run() {
             commands::set_placement_mode,
             commands::get_placement_mode,
             commands::dismiss_window,
+            commands::arcade_set_config,
+            commands::arcade_get_config,
+            commands::arcade_delete_config,
+            commands::arcade_list_tools,
+            commands::arcade_authorize_tool,
+            commands::arcade_check_auth_status,
+            commands::arcade_execute_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running muppet");

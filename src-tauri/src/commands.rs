@@ -1,5 +1,6 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 
+use crate::arcade::{self, ArcadeClient};
 use crate::error::AppError;
 use crate::exa::{self, ContentOptions, SearchCategory};
 use crate::placement::{self, PlacementMode, PlacementState};
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 use tracing::{error, info, instrument};
 use zeroize::Zeroize;
 
@@ -50,6 +52,10 @@ const EXA_VAULT_PROVIDER: &str = "exa";
 const DEFAULT_PAGE_SIZE: i32 = 100;
 
 const MAX_AGENT_ID_LENGTH: usize = 200;
+const MAX_ARCADE_API_KEY_LENGTH: usize = 256;
+const MAX_ARCADE_BASE_URL_LENGTH: usize = 500;
+const MAX_ARCADE_TOOLKIT_LENGTH: usize = 200;
+const MAX_ARCADE_INPUT_BYTES: usize = 1_000_000;
 
 fn validate_agent_id(agent_id: &str) -> Result<(), AppError> {
     validate_identifier(agent_id, MAX_AGENT_ID_LENGTH, "Agent ID", &['-', '_', '.', ':'])
@@ -146,6 +152,116 @@ fn validate_setting_key(key: &str) -> Result<(), AppError> {
 
 fn validate_provider(provider: &str) -> Result<(), AppError> {
     validate_identifier(provider, MAX_PROVIDER_LENGTH, "Provider name", &['-', '_'])
+}
+
+/// Validate that a base URL uses HTTPS (or HTTP for localhost dev) and has a valid host.
+/// Prevents SSRF via file://, ftp://, or requests to internal network addresses.
+pub(crate) fn validate_base_url(url_str: &str) -> Result<(), AppError> {
+    let parsed = url::Url::parse(url_str)
+        .map_err(|_| AppError::Validation("Base URL is not a valid URL".into()))?;
+
+    // Reject URLs with embedded credentials (e.g., https://evil@internal-host/)
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppError::Validation(
+            "Base URL must not contain credentials".into(),
+        ));
+    }
+
+    if parsed.fragment().is_some() {
+        return Err(AppError::Validation(
+            "Base URL must not contain a fragment (#)".into(),
+        ));
+    }
+    if parsed.query().is_some() {
+        return Err(AppError::Validation(
+            "Base URL must not contain query parameters".into(),
+        ));
+    }
+
+    match parsed.scheme() {
+        "https" => {}
+        "http" => {
+            // Allow http only for localhost development
+            let host = parsed.host_str().unwrap_or("");
+            if host != "localhost" {
+                return Err(AppError::Validation(
+                    "Base URL must use HTTPS (HTTP is only allowed for localhost)".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(AppError::Validation(
+                "Base URL must use HTTPS".into(),
+            ));
+        }
+    }
+
+    // Block private/internal addresses to prevent SSRF.
+    // Use the url crate's parsed Host enum for robust IP range checking
+    // instead of fragile string-prefix matching.
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            if ip.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || ip.is_loopback()    // 127.0.0.0/8
+                || ip.is_unspecified() // 0.0.0.0
+                || ip.is_link_local()  // 169.254.0.0/16 (covers AWS metadata endpoint)
+                || ip.is_broadcast()   // 255.255.255.255
+                || ip.is_multicast()   // 224.0.0.0/4
+            {
+                return Err(AppError::Validation(
+                    "Base URL must not point to a private or internal address".into(),
+                ));
+            }
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) bypass native IPv6
+            // checks like is_loopback(), so extract and check the inner IPv4 address.
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                if v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_unspecified()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_multicast()
+                {
+                    return Err(AppError::Validation(
+                        "Base URL must not point to a private or internal address".into(),
+                    ));
+                }
+            }
+            if ip.is_loopback()       // ::1
+                || ip.is_unspecified() // ::
+                || ip.is_multicast()  // ff00::/8
+                // RFC 4193 unique local addresses (fc00::/7)
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                // Link-local unicast (fe80::/10)
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+            {
+                return Err(AppError::Validation(
+                    "Base URL must not point to a private or internal address".into(),
+                ));
+            }
+        }
+        Some(url::Host::Domain(domain)) => {
+            let lower = domain.to_lowercase();
+            if lower == "localhost"
+                || lower.ends_with(".internal")
+                || lower.ends_with(".local")
+                || lower.ends_with(".localhost")
+            {
+                return Err(AppError::Validation(
+                    "Base URL must not point to a private or internal address".into(),
+                ));
+            }
+            // Note: "localhost" is also caught by the lower == "localhost" check above,
+            // ensuring it's blocked for both http and https.
+        }
+        None => {
+            return Err(AppError::Validation("Base URL must have a valid host".into()));
+        }
+    }
+
+    Ok(())
 }
 
 fn get_pool(app: &AppHandle) -> Result<&SqlitePool, AppError> {
@@ -746,6 +862,259 @@ pub async fn delete_api_key(
 
     info!(provider = %provider, "deleted API key from vault");
     Ok(())
+}
+
+// ── Arcade Commands ──
+
+fn get_arcade_client(app: &AppHandle) -> Result<Arc<ArcadeClient>, AppError> {
+    let state = app
+        .try_state::<RwLock<Option<Arc<ArcadeClient>>>>()
+        .ok_or(AppError::ArcadeNotConfigured)?;
+    let guard = state.read().map_err(|e| {
+        error!(error = %e, "arcade RwLock poisoned");
+        AppError::ArcadeNotConfigured
+    })?;
+    guard
+        .as_ref()
+        .cloned()
+        .ok_or(AppError::ArcadeNotConfigured)
+}
+
+#[tauri::command]
+pub async fn arcade_set_config(
+    app: AppHandle,
+    mut api_key: String,
+    user_id: String,
+    base_url: Option<String>,
+) -> Result<(), AppError> {
+    validate_non_empty_bounded(&api_key, MAX_ARCADE_API_KEY_LENGTH, "API key")?;
+    arcade::validate_user_id(&user_id)?;
+    if let Some(ref url) = base_url {
+        validate_non_empty_bounded(url, MAX_ARCADE_BASE_URL_LENGTH, "Base URL")?;
+        validate_base_url(url)?;
+    }
+
+    // Store API key in the encrypted vault (not plaintext settings)
+    {
+        let vault_state = get_vault(&app)?;
+        let vault = lock_vault(vault_state)?;
+        let client = get_vault_client(&vault)?;
+
+        let key_bytes = api_key.as_bytes().to_vec();
+        client
+            .store()
+            .insert(b"arcade_api_key".to_vec(), key_bytes, None)
+            .map_err(|e| {
+                error!(error = ?e, "failed to store arcade API key in vault");
+                AppError::Internal("Failed to store API key".into())
+            })?;
+        commit_vault(&vault)?;
+    }
+
+    // Store non-secret config in settings
+    let pool = get_pool(&app)?;
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES ('arcade_user_id', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+    )
+    .bind(&user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if let Some(ref url) = base_url {
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES ('arcade_base_url', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        )
+        .bind(url)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM settings WHERE key = 'arcade_base_url'")
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+
+    let client_result = ArcadeClient::new(api_key.clone(), user_id, base_url);
+    api_key.zeroize();
+    let client = client_result?;
+    let state = app.state::<RwLock<Option<Arc<ArcadeClient>>>>();
+    let mut guard = state.write().map_err(|e| {
+        error!(error = %e, "arcade RwLock poisoned");
+        AppError::ArcadeNotConfigured
+    })?;
+    *guard = Some(Arc::new(client));
+
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct ArcadeConfigStatus {
+    pub configured: bool,
+    pub user_id: Option<String>,
+}
+
+#[tauri::command]
+pub async fn arcade_get_config(app: AppHandle) -> Result<ArcadeConfigStatus, AppError> {
+    // Check API key existence in the vault, zeroizing any loaded bytes
+    let has_key = {
+        let vault_state = get_vault(&app)?;
+        let vault = lock_vault(vault_state)?;
+        let client = get_vault_client(&vault)?;
+        match client.store().get(b"arcade_api_key") {
+            Ok(Some(mut data)) => {
+                data.zeroize();
+                true
+            }
+            _ => false,
+        }
+    };
+
+    let pool = get_pool(&app)?;
+    let user_id: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'arcade_user_id'")
+            .fetch_optional(pool)
+            .await?;
+
+    Ok(ArcadeConfigStatus {
+        configured: has_key && user_id.is_some(),
+        user_id,
+    })
+}
+
+#[tauri::command]
+pub async fn arcade_delete_config(app: AppHandle) -> Result<(), AppError> {
+    // Remove API key from the encrypted vault
+    {
+        let vault_state = get_vault(&app)?;
+        let vault = lock_vault(vault_state)?;
+        let client = get_vault_client(&vault)?;
+        let _ = client.store().delete(b"arcade_api_key");
+        commit_vault(&vault)?;
+    }
+
+    // Remove non-secret config from settings
+    let pool = get_pool(&app)?;
+    sqlx::query("DELETE FROM settings WHERE key IN ('arcade_user_id', 'arcade_base_url')")
+        .execute(pool)
+        .await?;
+
+    let state = app.state::<RwLock<Option<Arc<ArcadeClient>>>>();
+    let mut guard = state.write().map_err(|e| {
+        error!(error = %e, "arcade RwLock poisoned");
+        AppError::ArcadeNotConfigured
+    })?;
+    *guard = None;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn arcade_list_tools(
+    app: AppHandle,
+    toolkit: Option<String>,
+    limit: Option<u32>,
+) -> Result<arcade::ToolsListResponse, AppError> {
+    if let Some(ref tk) = toolkit {
+        validate_non_empty_bounded(tk, MAX_ARCADE_TOOLKIT_LENGTH, "Toolkit name")?;
+    }
+    let client = get_arcade_client(&app)?;
+    Ok(client.list_tools(toolkit.as_deref(), limit).await?)
+}
+
+#[derive(Serialize)]
+pub struct AuthorizeResult {
+    pub status: String,
+    pub authorization_id: Option<String>,
+    pub url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn arcade_authorize_tool(
+    app: AppHandle,
+    tool_name: String,
+) -> Result<AuthorizeResult, AppError> {
+    arcade::validate_tool_name(&tool_name)?;
+    let client = get_arcade_client(&app)?;
+
+    let resp = client.authorize_tool(&tool_name).await?;
+    let status = resp.status.clone().unwrap_or_default();
+
+    if status != "completed" {
+        if let Some(ref url_str) = resp.url {
+            // Parse and validate the URL scheme to prevent opening javascript:, file:,
+            // data:, or custom scheme URLs from a potentially malicious API response.
+            // url::Url::parse normalizes the scheme to lowercase, so this is case-insensitive.
+            if let Ok(parsed) = url::Url::parse(url_str) {
+                if parsed.scheme() == "https" || parsed.scheme() == "http" {
+                    if let Err(e) = app.opener().open_url(url_str, None::<&str>) {
+                        error!(error = %e, "failed to open authorization URL");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(AuthorizeResult {
+        status,
+        authorization_id: resp.id,
+        url: resp.url,
+    })
+}
+
+#[tauri::command]
+pub async fn arcade_check_auth_status(
+    app: AppHandle,
+    authorization_id: String,
+    wait: Option<u32>,
+) -> Result<AuthorizeResult, AppError> {
+    validate_non_empty_bounded(&authorization_id, 256, "Authorization ID")?;
+    // Authorization IDs should only contain safe characters (alphanumeric, hyphens, underscores)
+    if !authorization_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(AppError::Validation(
+            "Authorization ID contains invalid characters".into(),
+        ));
+    }
+    let client = get_arcade_client(&app)?;
+
+    // Clamp the wait timeout to prevent excessively long server-side polling
+    let resp = client
+        .check_auth_status(&authorization_id, wait.map(|w| w.min(59)))
+        .await?;
+
+    Ok(AuthorizeResult {
+        status: resp.status.unwrap_or_default(),
+        authorization_id: resp.id,
+        url: resp.url,
+    })
+}
+
+#[tauri::command]
+pub async fn arcade_execute_tool(
+    app: AppHandle,
+    tool_name: String,
+    input: Option<serde_json::Value>,
+) -> Result<arcade::ExecuteToolResponse, AppError> {
+    arcade::validate_tool_name(&tool_name)?;
+    if let Some(ref val) = input {
+        let estimated_size = serde_json::to_string(val)
+            .map(|s| s.len())
+            .unwrap_or(0);
+        if estimated_size > MAX_ARCADE_INPUT_BYTES {
+            return Err(AppError::Validation(format!(
+                "Tool input exceeds maximum size of {MAX_ARCADE_INPUT_BYTES} bytes"
+            )));
+        }
+    }
+    let client = get_arcade_client(&app)?;
+    Ok(client.execute_tool(&tool_name, input).await?)
 }
 
 // ── Global Hotkey ──
