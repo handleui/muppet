@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use tracing::{debug, info};
 
 fn versioned_migrations() -> Vec<(i64, Vec<&'static str>)> {
     vec![
@@ -49,10 +50,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
 
         if already_applied {
+            debug!(version, "migration already applied, skipping");
             continue;
         }
 
         apply_migration(pool, version, &statements).await?;
+        info!(version, "applied migration");
     }
 
     Ok(())

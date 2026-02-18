@@ -3,10 +3,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::error::AppError;
 use crate::exa::{self, ContentOptions, SearchCategory};
 use crate::supermemory::{self, AddDocumentRequest, AddDocumentResponse, SupermemoryClient};
+use crate::vault::ApiKeyVault;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tracing::{error, info, instrument};
+use zeroize::Zeroize;
 
 // ── Types ──
 
@@ -40,6 +43,11 @@ const MAX_TITLE_LENGTH: usize = 500;
 const MAX_CONTENT_LENGTH: usize = 100_000;
 const MAX_MODEL_LENGTH: usize = 100;
 const MAX_EXA_API_KEY_LENGTH: usize = 256;
+const MAX_SETTING_KEY_LENGTH: usize = 255;
+const MAX_SETTING_VALUE_LENGTH: usize = 10_000;
+const MAX_PROVIDER_LENGTH: usize = 50;
+const MAX_API_KEY_LENGTH: usize = 500;
+const VAULT_CLIENT_NAME: &[u8] = b"api-keys";
 const DEFAULT_PAGE_SIZE: i32 = 100;
 
 const MAX_SUPERMEMORY_CONTENT_LENGTH: usize = 1_000_000;
@@ -131,6 +139,44 @@ fn validate_optional_tag(tag: &Option<String>, max: usize) -> Result<(), AppErro
     Ok(())
 }
 
+fn validate_setting_key(key: &str) -> Result<(), AppError> {
+    if key.is_empty() || key.len() > MAX_SETTING_KEY_LENGTH {
+        return Err(AppError::Validation(format!(
+            "Setting key must be 1-{} characters",
+            MAX_SETTING_KEY_LENGTH
+        )));
+    }
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(AppError::Validation(
+            "Setting key may only contain alphanumeric characters, hyphens, underscores, and dots"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_provider(provider: &str) -> Result<(), AppError> {
+    if provider.is_empty() || provider.len() > MAX_PROVIDER_LENGTH {
+        return Err(AppError::Validation(format!(
+            "Provider name must be 1-{} characters",
+            MAX_PROVIDER_LENGTH
+        )));
+    }
+    if !provider
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(AppError::Validation(
+            "Provider name may only contain alphanumeric characters, hyphens, and underscores"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 fn get_pool(app: &AppHandle) -> Result<&SqlitePool, AppError> {
     app.try_state::<SqlitePool>()
         .ok_or(AppError::DbNotInitialized)
@@ -147,6 +193,25 @@ fn get_exa_key_cache(app: &AppHandle) -> Result<&ExaKeyCache, AppError> {
     app.try_state::<ExaKeyCache>()
         .ok_or(AppError::Validation("API key cache not initialized".into()))
         .map(|state| state.inner())
+}
+
+fn get_vault(app: &AppHandle) -> Result<&Mutex<ApiKeyVault>, AppError> {
+    app.try_state::<Mutex<ApiKeyVault>>()
+        .ok_or_else(|| AppError::Internal("API key vault not initialized".into()))
+        .map(|state| state.inner())
+}
+
+/// Acquire the vault Mutex, recovering from poison if a prior command panicked.
+fn lock_vault(
+    mutex: &Mutex<ApiKeyVault>,
+) -> Result<std::sync::MutexGuard<'_, ApiKeyVault>, AppError> {
+    match mutex.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            tracing::warn!("vault mutex was poisoned by a prior panic, recovering");
+            Ok(poisoned.into_inner())
+        }
+    }
 }
 
 // ── Conversation Commands ──
@@ -301,6 +366,44 @@ pub async fn save_message(
     Ok(message)
 }
 
+// ── Settings Commands ──
+
+#[tauri::command]
+#[instrument(skip(app))]
+pub async fn get_setting(app: AppHandle, key: String) -> Result<Option<String>, AppError> {
+    validate_setting_key(&key)?;
+
+    let pool = get_pool(&app)?;
+    Ok(sqlx::query_scalar::<Sqlite, String>("SELECT value FROM settings WHERE key = ?")
+        .bind(&key)
+        .fetch_optional(pool)
+        .await?)
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+pub async fn set_setting(app: AppHandle, key: String, value: String) -> Result<(), AppError> {
+    validate_setting_key(&key)?;
+    if value.len() > MAX_SETTING_VALUE_LENGTH {
+        return Err(AppError::Validation(format!(
+            "Setting value exceeds maximum length of {} characters",
+            MAX_SETTING_VALUE_LENGTH
+        )));
+    }
+
+    let pool = get_pool(&app)?;
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+    )
+    .bind(&key)
+    .bind(&value)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 // ── Supermemory Commands ──
 
 fn get_supermemory_client(app: &AppHandle) -> Result<Arc<SupermemoryClient>, AppError> {
@@ -382,7 +485,7 @@ pub async fn supermemory_search(
     Ok(client.search(&req).await?)
 }
 
-// ── API Key Commands ──
+// ── Exa API Key Commands ──
 
 #[tauri::command]
 pub async fn store_exa_api_key(app: AppHandle, key: String) -> Result<(), AppError> {
@@ -464,6 +567,101 @@ pub async fn search_web(
     let client = exa::ExaClient::new(http, &api_key);
 
     client.search(&request).await
+}
+
+// ── Vault API Key Commands ──
+
+fn get_vault_client(
+    vault: &ApiKeyVault,
+) -> Result<iota_stronghold::Client, AppError> {
+    vault
+        .stronghold
+        .get_client(VAULT_CLIENT_NAME)
+        .map_err(|e| {
+            error!(error = ?e, "failed to get stronghold client");
+            AppError::Internal("Vault operation failed".into())
+        })
+}
+
+fn commit_vault(vault: &ApiKeyVault) -> Result<(), AppError> {
+    let keyprovider =
+        iota_stronghold::KeyProvider::try_from(vault.vault_key.clone()).map_err(|e| {
+            error!(error = ?e, "failed to create key provider");
+            AppError::Internal("Vault operation failed".into())
+        })?;
+
+    vault
+        .stronghold
+        .commit_with_keyprovider(&vault.snapshot_path, &keyprovider)
+        .map_err(|e| {
+            error!(error = ?e, "failed to commit stronghold snapshot");
+            AppError::Internal("Failed to persist API key".into())
+        })
+}
+
+#[tauri::command]
+#[instrument(skip(app, api_key))]
+pub async fn store_api_key(
+    app: AppHandle,
+    provider: String,
+    mut api_key: String,
+) -> Result<(), AppError> {
+    let result = (|| -> Result<(), AppError> {
+        validate_provider(&provider)?;
+        if api_key.is_empty() || api_key.len() > MAX_API_KEY_LENGTH {
+            return Err(AppError::Validation("Invalid API key".into()));
+        }
+
+        let vault_state = get_vault(&app)?;
+        let vault = lock_vault(vault_state)?;
+        let client = get_vault_client(&vault)?;
+
+        let store_key = format!("api_key:{}", provider);
+        let key_bytes = api_key.as_bytes().to_vec();
+        api_key.zeroize();
+        let insert_result = client
+            .store()
+            .insert(store_key.into_bytes(), key_bytes, None);
+        insert_result.map_err(|e| {
+            error!(error = ?e, "failed to insert into stronghold store");
+            AppError::Internal("Failed to store API key".into())
+        })?;
+
+        commit_vault(&vault)?;
+
+        info!(provider = %provider, "stored API key");
+        Ok(())
+    })();
+
+    result
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+pub async fn get_api_key(
+    app: AppHandle,
+    provider: String,
+) -> Result<Option<String>, AppError> {
+    validate_provider(&provider)?;
+
+    let vault_state = get_vault(&app)?;
+    let vault = lock_vault(vault_state)?;
+    let client = get_vault_client(&vault)?;
+
+    let store_key = format!("api_key:{}", provider);
+    match client.store().get(store_key.as_bytes()) {
+        Ok(Some(mut data)) => {
+            let value = String::from_utf8(data.clone())
+                .map_err(|_| AppError::Internal("Corrupted API key data".into()));
+            data.zeroize();
+            Ok(Some(value?))
+        }
+        Ok(None) => Ok(None),
+        Err(e) => {
+            error!(error = ?e, "failed to read from stronghold store");
+            Err(AppError::Internal("Failed to retrieve API key".into()))
+        }
+    }
 }
 
 // ── Global Hotkey ──
