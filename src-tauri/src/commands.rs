@@ -760,10 +760,10 @@ fn set_mode_if_visible(app_handle: &AppHandle, mode: PlacementMode) {
 }
 
 const PLACEMENT_HOTKEYS: &[(&str, PlacementMode)] = &[
-    ("Alt+ArrowLeft", PlacementMode::SidebarLeft),
-    ("Alt+ArrowRight", PlacementMode::SidebarRight),
-    ("Alt+ArrowUp", PlacementMode::Center),
-    ("Alt+ArrowDown", PlacementMode::Compact),
+    ("Ctrl+Alt+ArrowLeft", PlacementMode::SidebarLeft),
+    ("Ctrl+Alt+ArrowRight", PlacementMode::SidebarRight),
+    ("Ctrl+Alt+ArrowUp", PlacementMode::Center),
+    ("Ctrl+Alt+ArrowDown", PlacementMode::Compact),
 ];
 
 pub fn register_hotkey(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {

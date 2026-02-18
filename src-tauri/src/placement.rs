@@ -108,14 +108,6 @@ pub fn apply_placement(window: &WebviewWindow, mode: PlacementMode) -> Result<()
 }
 
 pub fn load_state(path: &Path) -> PlacementMode {
-    let is_symlink = std::fs::symlink_metadata(path)
-        .map(|m| m.is_symlink())
-        .unwrap_or(false);
-    if is_symlink {
-        eprintln!("Refusing to load state from symlink: {:?}", path);
-        return PlacementMode::default();
-    }
-
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str::<PlacementMode>(&s).ok())
