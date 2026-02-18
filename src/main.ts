@@ -56,13 +56,16 @@ function printDevHelp() {
   console.log("[muppet] DEV MODE — invoke exposed as window.__muppet_invoke()");
   for (const [section, commands] of Object.entries(DEV_COMMANDS)) {
     console.log(`[muppet] ${section}:`);
-    commands.forEach((cmd) => console.log(`  ${cmd}`));
+    for (const cmd of commands) {
+      console.log(`  ${cmd}`);
+    }
   }
 }
 
 function exposeDevGlobals() {
-  (window as any).__muppet_invoke = invoke;
-  (window as any).__muppet_streamChat = (
+  const w = window as unknown as Record<string, unknown>;
+  w.__muppet_invoke = invoke;
+  w.__muppet_streamChat = (
     conversationId: string,
     messages: ChatMessage[],
     model: string

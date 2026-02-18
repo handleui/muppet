@@ -5,7 +5,13 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    "check-types": {},
-    "lint": {}
+    "check-types": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "check": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    }
   }
 }

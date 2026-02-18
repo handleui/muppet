@@ -1,11 +1,14 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
 
 use crate::error::AppError;
 
 const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
 const MAX_QUERY_LENGTH: usize = 2_000;
 const MAX_NUM_RESULTS: u32 = 100;
+/// Maximum response body size (5 MiB). Prevents OOM from oversized API responses.
+const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 
 // ── Request Types ──
 
@@ -128,9 +131,14 @@ impl<'a> ExaClient<'a> {
     async fn classify_error_status(response: reqwest::Response) -> AppError {
         let status = response.status();
         // Truncate body to avoid logging sensitive data the API might echo back.
-        let body = response.text().await.unwrap_or_default();
-        let safe_body: String = body.chars().take(200).collect();
-        eprintln!("Exa API error ({}): {}", status, safe_body);
+        let mut body = response.text().await.unwrap_or_default();
+        // Truncate in place instead of allocating a new String via chars().take().collect().
+        if let Some((idx, _)) = body.char_indices().nth(200) {
+            body.truncate(idx);
+        }
+        // Redact anything that looks like an API key before logging.
+        let safe_body = redact_api_keys(&body);
+        error!(status = %status, body = %safe_body, "Exa API error");
 
         match status.as_u16() {
             401 => AppError::ExaAuth,
@@ -140,8 +148,27 @@ impl<'a> ExaClient<'a> {
     }
 
     async fn parse_response(response: reqwest::Response) -> Result<SearchResponse, AppError> {
-        response.json::<SearchResponse>().await.map_err(|_| {
-            eprintln!("Exa: failed to deserialize search response");
+        // Check Content-Length header *before* buffering to avoid OOM on huge responses.
+        if let Some(len) = response.content_length() {
+            if len > MAX_RESPONSE_BYTES as u64 {
+                error!(size = len, "Exa: response Content-Length exceeds size limit");
+                return Err(AppError::ExaRequest);
+            }
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| {
+                error!("Exa: failed to read response body");
+                AppError::ExaRequest
+            })?;
+        // Still check actual size: Content-Length can be absent or lie (chunked encoding).
+        if bytes.len() > MAX_RESPONSE_BYTES {
+            error!(size = bytes.len(), "Exa: response body exceeds size limit");
+            return Err(AppError::ExaRequest);
+        }
+        serde_json::from_slice::<SearchResponse>(&bytes).map_err(|_| {
+            error!("Exa: failed to deserialize search response");
             AppError::ExaRequest
         })
     }
@@ -150,15 +177,45 @@ impl<'a> ExaClient<'a> {
 /// Log transport-level errors without leaking connection details.
 fn log_transport_error(e: &reqwest::Error) {
     if e.is_timeout() {
-        eprintln!("Exa HTTP error: request timed out");
+        warn!("Exa HTTP error: request timed out");
     } else if e.is_connect() {
-        eprintln!("Exa HTTP error: connection failed");
+        warn!("Exa HTTP error: connection failed");
+    } else if let Some(status) = e.status() {
+        warn!(status = %status, "Exa HTTP error: request failed");
     } else {
-        eprintln!(
-            "Exa HTTP error: request failed (status: {})",
-            e.status().map_or("none".to_string(), |s| s.to_string())
-        );
+        warn!("Exa HTTP error: request failed (no status)");
     }
+}
+
+/// Redact patterns that look like API keys before logging error bodies.
+///
+/// Returns a `Cow::Borrowed` when no redaction is needed (the common case),
+/// avoiding a heap allocation on the error-logging hot path.
+fn redact_api_keys(s: &str) -> std::borrow::Cow<'_, str> {
+    // Matches common API key patterns: alphanumeric strings with dashes/underscores, 20+ chars.
+    // Catches sk-ant-*, exa-*, and similar bearer-style tokens.
+    const PREFIXES: &[&str] = &["sk-ant-", "sk-", "exa-", "key-", "bearer ", "Bearer "];
+
+    // Fast path: skip allocation if no prefix is present in the input.
+    if !PREFIXES.iter().any(|p| s.contains(p)) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+
+    let mut result = s.to_string();
+    // Simple approach: replace any token-like sequence (20+ alphanumeric/dash/underscore chars)
+    // that appears after common key prefixes.
+    for prefix in PREFIXES {
+        if let Some(start) = result.find(prefix) {
+            let end = result[start..]
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                .map(|i| start + i)
+                .unwrap_or(result.len());
+            if end - start > 10 {
+                result.replace_range(start..end, "[REDACTED]");
+            }
+        }
+    }
+    std::borrow::Cow::Owned(result)
 }
 
 // ── Validation ──

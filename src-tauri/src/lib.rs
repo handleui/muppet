@@ -183,12 +183,14 @@ async fn init_db_pool(app_data_dir: &Path) -> Result<SqlitePool, Box<dyn std::er
     Ok(pool)
 }
 
-async fn load_cached_exa_key(pool: &SqlitePool) -> Option<String> {
-    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'exa_api_key'")
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
+/// Load the Exa API key from the vault into memory for fast access.
+fn load_cached_exa_key_from_vault(vault: &vault::ApiKeyVault) -> Option<String> {
+    let client = vault.stronghold.get_client(b"api-keys").ok()?;
+    let store_key = b"api_key:exa";
+    match client.store().get(store_key) {
+        Ok(Some(data)) => String::from_utf8(data).ok(),
+        _ => None,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -207,11 +209,16 @@ pub fn run() {
             ensure_app_data_dir(&app_data_dir);
 
             let pool = tauri::async_runtime::block_on(init_db_pool(&app_data_dir))?;
-            let cached_api_key = tauri::async_runtime::block_on(load_cached_exa_key(&pool));
 
             app.manage(pool);
-            app.manage(reqwest::Client::new());
-            app.manage(commands::ExaKeyCache(std::sync::Mutex::new(cached_api_key)));
+            app.manage(
+                reqwest::Client::builder()
+                    .user_agent("muppet/0.1.0")
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                    .expect("failed to build HTTP client"),
+            );
 
             app.manage(
                 std::sync::RwLock::new(Option::<std::sync::Arc<supermemory::SupermemoryClient>>::None),
@@ -221,6 +228,8 @@ pub fn run() {
             init_stronghold_plugin(app.handle(), salt)?;
 
             let api_vault = init_api_key_vault(&app_data_dir, &salt);
+            let cached_exa_key = load_cached_exa_key_from_vault(&api_vault);
+            app.manage(commands::ExaKeyCache(std::sync::Mutex::new(cached_exa_key)));
             app.manage(std::sync::Mutex::new(api_vault));
 
             let placement_file = app_data_dir.join("placement.json");
@@ -256,6 +265,8 @@ pub fn run() {
             commands::set_setting,
             commands::store_api_key,
             commands::get_api_key,
+            commands::has_api_key,
+            commands::delete_api_key,
             commands::set_placement_mode,
             commands::get_placement_mode,
             commands::dismiss_window,

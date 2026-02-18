@@ -21,7 +21,8 @@ export function streamChat(
 ): { promise: Promise<void>; cancel: () => void } {
   const abortController = new AbortController();
 
-  let fullContent = "";
+  // Collect chunks in an array to avoid O(n^2) string concatenation per token.
+  const chunks: string[] = [];
 
   const promise = (async () => {
     const apiKey = await invoke<string | null>("get_api_key", {
@@ -42,9 +43,11 @@ export function streamChat(
       abortSignal: abortController.signal,
     });
     for await (const chunk of result.textStream) {
-      fullContent += chunk;
+      chunks.push(chunk);
       callbacks.onToken(chunk);
     }
+
+    const fullContent = chunks.join("");
 
     const usage = await Promise.resolve(result.usage).catch(() => ({
       inputTokens: null,
@@ -62,6 +65,7 @@ export function streamChat(
 
     callbacks.onDone?.(fullContent, model);
   })().catch(async (err) => {
+    const fullContent = chunks.join("");
     if (err.name === "AbortError") {
       if (fullContent) {
         await invoke("save_message", {
@@ -71,7 +75,9 @@ export function streamChat(
           model,
           tokensIn: null,
           tokensOut: null,
-        }).catch(() => {});
+        }).catch(() => {
+          // Best-effort save on abort; failure is non-critical
+        });
       }
       callbacks.onDone?.(fullContent, model);
       return;
