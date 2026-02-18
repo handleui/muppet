@@ -258,6 +258,7 @@ pub fn run() {
             commands::get_api_key,
             commands::set_placement_mode,
             commands::get_placement_mode,
+            commands::dismiss_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running muppet");

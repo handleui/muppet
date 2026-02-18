@@ -742,6 +742,11 @@ fn dismiss(app_handle: &AppHandle) {
     }
 }
 
+#[tauri::command]
+pub fn dismiss_window(app: AppHandle) {
+    dismiss(&app);
+}
+
 fn set_mode_if_visible(app_handle: &AppHandle, mode: PlacementMode) {
     let Some(window) = get_main_window(app_handle) else { return };
     if !window.is_visible().unwrap_or(false) { return };
@@ -764,10 +769,6 @@ const PLACEMENT_HOTKEYS: &[(&str, PlacementMode)] = &[
 pub fn register_hotkey(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.global_shortcut().on_shortcut("Alt+Space", move |h, _, e| {
         if e.state == ShortcutState::Pressed { summon(h); }
-    })?;
-
-    app.global_shortcut().on_shortcut("Escape", move |h, _, e| {
-        if e.state == ShortcutState::Pressed { dismiss(h); }
     })?;
 
     for &(key, mode) in PLACEMENT_HOTKEYS {

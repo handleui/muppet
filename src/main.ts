@@ -1,6 +1,29 @@
 import { invoke } from "@tauri-apps/api/core";
 import { streamChat, type ChatMessage } from "./streaming";
 
+function setupEscapeDismiss() {
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key !== "Escape") {
+      return;
+    }
+
+    // Don't intercept Escape when focus is inside form inputs, dialogs, etc.
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable ||
+        target.closest("dialog[open]"))
+    ) {
+      return;
+    }
+
+    invoke("dismiss_window");
+  });
+}
+
 const DEV_COMMANDS: Record<string, string[]> = {
   "DB commands": [
     '__muppet_invoke("create_conversation", { title: "Test" })',
@@ -50,6 +73,8 @@ function exposeDevGlobals() {
       onError: (msg) => console.error("[error]", msg),
     });
 }
+
+setupEscapeDismiss();
 
 // Only expose globals in dev builds — in production this would be an XSS vector.
 if (import.meta.env.DEV) {
