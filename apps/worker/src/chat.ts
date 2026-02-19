@@ -27,6 +27,7 @@ async function resolveAgentId(
   const wasSet = await trySetConversationAgentId(
     db,
     conversationId,
+    userId,
     newAgentId
   );
   if (wasSet) {

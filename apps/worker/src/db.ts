@@ -118,20 +118,23 @@ export async function setConversationAgentId(
   }
 }
 
-/**
- * Atomically set agent ID only if not already set. Returns true if this call won.
- * Note: userId ownership check is performed by the caller via getConversation
- * before this runs, so we only need the race-condition guard here.
- */
+/** Atomically set agent ID only if not already set. Returns true if this call won. */
 export async function trySetConversationAgentId(
   db: AppDatabase,
   id: string,
+  userId: string,
   agentId: string
 ): Promise<boolean> {
   const result = await db
     .update(conversations)
     .set({ letta_agent_id: agentId, updated_at: sql`datetime('now')` })
-    .where(and(eq(conversations.id, id), isNull(conversations.letta_agent_id)))
+    .where(
+      and(
+        eq(conversations.id, id),
+        eq(conversations.user_id, userId),
+        isNull(conversations.letta_agent_id)
+      )
+    )
     .returning({ id: conversations.id });
   return result.length > 0;
 }
