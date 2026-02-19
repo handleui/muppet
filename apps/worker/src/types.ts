@@ -1,3 +1,22 @@
+import type { conversations, messages } from "./schema";
+
+// ── Worker Bindings ──
+
+export interface Bindings {
+  ENVIRONMENT?: string;
+  EXA_API_KEY: string;
+  FIRECRAWL_API_KEY: string;
+  LETTA_API_KEY: string;
+  DB: D1Database;
+  KV?: KVNamespace;
+  BETTER_AUTH_SECRET: string;
+  BETTER_AUTH_URL: string;
+  GITHUB_CLIENT_ID: string;
+  GITHUB_CLIENT_SECRET: string;
+}
+
+// ── Exa (web search) ──
+
 export type SearchType = "neural" | "fast" | "auto" | "deep";
 
 export type SearchCategory =
@@ -53,23 +72,8 @@ export interface ScrapeResponse {
 
 // ── Conversations ──
 
-export interface Conversation {
-  id: string;
-  title: string;
-  letta_agent_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type Conversation = typeof conversations.$inferSelect;
 
 // ── Messages ──
 
-export interface Message {
-  id: string;
-  conversation_id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  model: string | null;
-  tokens_in: number;
-  tokens_out: number;
-  created_at: string;
-}
+export type Message = typeof messages.$inferSelect;

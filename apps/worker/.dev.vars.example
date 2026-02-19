@@ -18,3 +18,9 @@ FIRECRAWL_API_KEY=
 
 # Letta AI (agent memory + Anthropic routing) — https://letta.com
 LETTA_API_KEY=
+
+# Better Auth (authentication) — https://better-auth.com
+BETTER_AUTH_SECRET=dev-secret-change-me-at-least-32-chars
+BETTER_AUTH_URL=http://nosis-api.localhost:1355
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret

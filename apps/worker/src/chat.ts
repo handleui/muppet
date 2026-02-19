@@ -2,7 +2,8 @@ import { streamText } from "ai";
 import { createAgent, createProvider } from "@nosis/provider";
 import { HTTPException } from "hono/http-exception";
 import {
-  getConversation,
+  type AppDatabase,
+  getConversationAgentId,
   saveMessageBatch,
   trySetConversationAgentId,
 } from "./db";
@@ -11,8 +12,9 @@ import { sanitizeError } from "./sanitize";
 /** Resolve or create the Letta agent for a conversation (race-safe). */
 async function resolveAgentId(
   provider: ReturnType<typeof createProvider>,
-  db: D1Database,
+  db: AppDatabase,
   conversationId: string,
+  userId: string,
   existingAgentId: string | null,
   ctx: ExecutionContext,
   lettaApiKey: string
@@ -25,6 +27,7 @@ async function resolveAgentId(
   const wasSet = await trySetConversationAgentId(
     db,
     conversationId,
+    userId,
     newAgentId
   );
   if (wasSet) {
@@ -41,19 +44,24 @@ async function resolveAgentId(
     })
   );
 
-  const updated = await getConversation(db, conversationId);
-  if (!updated.letta_agent_id) {
+  const winnerAgentId = await getConversationAgentId(
+    db,
+    conversationId,
+    userId
+  );
+  if (!winnerAgentId) {
     throw new HTTPException(500, {
       message: "Failed to resolve agent for conversation",
     });
   }
-  return updated.letta_agent_id;
+  return winnerAgentId;
 }
 
 export async function streamChat(
-  db: D1Database,
+  db: AppDatabase,
   lettaApiKey: string,
   conversationId: string,
+  userId: string,
   content: string,
   ctx: ExecutionContext
 ): Promise<Response> {
@@ -63,13 +71,19 @@ export async function streamChat(
     });
   }
 
-  const conversation = await getConversation(db, conversationId);
+  // Lightweight lookup — only fetches letta_agent_id, not the full conversation row
+  const existingAgentId = await getConversationAgentId(
+    db,
+    conversationId,
+    userId
+  );
   const provider = createProvider(lettaApiKey);
   const agentId = await resolveAgentId(
     provider,
     db,
     conversationId,
-    conversation.letta_agent_id,
+    userId,
+    existingAgentId,
     ctx,
     lettaApiKey
   );

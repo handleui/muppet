@@ -132,23 +132,26 @@ export function validatePagination(
   limit: unknown,
   offset: unknown
 ): { limit: number; offset: number } {
-  let l = DEFAULT_PAGE_SIZE;
-  if (limit !== undefined && limit !== null) {
-    const n = Number(limit);
-    if (Number.isNaN(n) || !Number.isInteger(n)) {
-      badRequest("limit must be an integer");
-    }
-    l = Math.max(1, Math.min(n, MAX_PAGE_SIZE));
-  }
+  const parsedLimit = parsePageParam(limit, "limit", DEFAULT_PAGE_SIZE);
+  const parsedOffset = parsePageParam(offset, "offset", 0);
 
-  let o = 0;
-  if (offset !== undefined && offset !== null) {
-    const n = Number(offset);
-    if (Number.isNaN(n) || !Number.isInteger(n)) {
-      badRequest("offset must be an integer");
-    }
-    o = Math.max(0, n);
-  }
+  return {
+    limit: Math.max(1, Math.min(parsedLimit, MAX_PAGE_SIZE)),
+    offset: Math.max(0, parsedOffset),
+  };
+}
 
-  return { limit: l, offset: o };
+function parsePageParam(
+  value: unknown,
+  field: string,
+  defaultValue: number
+): number {
+  if (value === undefined || value === null) {
+    return defaultValue;
+  }
+  const n = Number(value);
+  if (Number.isNaN(n) || !Number.isInteger(n)) {
+    badRequest(`${field} must be an integer`);
+  }
+  return n;
 }
