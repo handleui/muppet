@@ -235,7 +235,7 @@ app.onError((err, c) => {
     return c.json({ error: redactSecrets(err.message, secrets) }, err.status);
   }
 
-  console.error("Unhandled error:", sanitizeError(err));
+  console.error("Unhandled error:", sanitizeError(err, secrets));
   return c.json({ error: "Internal server error" }, 500);
 });
 
