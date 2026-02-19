@@ -60,4 +60,5 @@ jobs:
           tagName: ${{ needs.release-please.outputs.tag_name }}
           releaseDraft: false
           prerelease: false
+          # Apple Silicon only — Intel Macs are EOL since Jun 2025
           args: --target aarch64-apple-darwin
