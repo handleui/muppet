@@ -11,8 +11,8 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "check-types": "turbo run check-types",
-    "check": "ultracite check",
-    "fix": "ultracite fix",
+    "check": "turbo run lint",
+    "fix": "turbo run fix",
     "prepare": "lefthook install"
   },
   "devDependencies": {

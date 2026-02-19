@@ -64,12 +64,32 @@ Move Exa search to the Worker. Server-side secrets replace per-device key config
 - Removed `exa.rs`, Exa commands, and related error variants from Rust backend
 - Rate limiting deferred to auth phase
 
-## Phase 3: Move conversation/message CRUD ← current
+## Phase 3: Move conversation/message CRUD ✓
 
-- D1 database with conversations + messages tables
-- REST endpoints mirroring current Tauri IPC commands
-- Remove CRUD from `commands.rs`
-- Frontend calls Worker instead of `invoke("save_message")`, etc.
+D1 database with conversations + messages tables. REST endpoints mirror Tauri IPC commands exactly (same validation rules, same error semantics).
+
+**Deliverables:**
+- `migrations/0001_initial_schema.sql` — conversations + messages tables, FK cascade, indexes
+- `src/db.ts` — 8 query functions (create/list/get/update/delete conversation, set agent, get/save message)
+- `src/validate.ts` — input validators mirroring Rust rules (UUID, title, role, content, pagination, agent ID)
+- `src/types.ts` — Conversation + Message interfaces
+- `wrangler.jsonc` — D1 binding (`DB` → `nosis-db`)
+- 8 REST endpoints in `src/index.ts`:
+  - `POST /api/conversations` (201)
+  - `GET /api/conversations` (paginated)
+  - `GET /api/conversations/:id`
+  - `PATCH /api/conversations/:id/title`
+  - `DELETE /api/conversations/:id` (cascade)
+  - `PATCH /api/conversations/:id/agent`
+  - `GET /api/conversations/:id/messages` (paginated)
+  - `POST /api/conversations/:id/messages` (201)
+- CORS updated with PATCH method
+- Content-Type enforcement middleware (CSRF defense)
+- `parseJsonBody` helper for DRY request parsing
+
+**Not yet done (deferred):**
+- Remove CRUD from `commands.rs` (Phase 5)
+- Frontend calls Worker instead of `invoke()` (Phase 5)
 
 ## Phase 4: Move AI streaming
 
