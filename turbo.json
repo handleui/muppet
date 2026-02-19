@@ -4,8 +4,14 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "tsconfig.json", "vite.config.*", "wrangler.*"],
-      "outputs": ["dist/**"]
+      "inputs": [
+        "src/**",
+        "tsconfig.json",
+        "vite.config.*",
+        "wrangler.*",
+        "next.config.*"
+      ],
+      "outputs": ["dist/**", ".next/**"]
     },
     "dev": {
       "cache": false,

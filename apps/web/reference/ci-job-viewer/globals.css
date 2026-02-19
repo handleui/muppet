@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* CI/CD State Colors */
+  --color-success-fg: #1e915b;
+  --color-success-bg: #d0f4e5;
+
+  --color-failure-fg: #f53b3a;
+  --color-failure-bg: #fee9cb;
+
+  --color-waiting-fg: #ae860c;
+  --color-waiting-bg: #fefbcb;
+  --color-waiting-accent: #ffd658;
+
+  --color-healing-fg: #911e85;
+  --color-healing-bg: #f6dbff;
+
+  --color-info-fg: #3672d9;
+  --color-info-bg: #edf5ff;
+
+  --color-extracting-fg: #3672d9;
+  --color-extracting-bg: #edf5ff;
+
+  /* UI Colors */
+  --color-muted: #808080;
+  --color-dim: #aaa;
+  --color-surface: #fafafa;
+}
+
+@utility border-subtle {
+  border-color: #e8e8e8;
+}
+
+@utility bg-subtle {
+  background-color: #e8e8e8;
+}
+
+@utility bg-healing-light {
+  background-color: color-mix(in srgb, var(--color-healing-bg) 40%, white);
+}
+
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility font-geist {
+  font-family: var(--font-geist-sans);
+}
+
+@keyframes shimmer-sweep {
+  0% {
+    background-position: 120% center;
+  }
+  55% {
+    background-position: -20% center;
+  }
+  100% {
+    background-position: -20% center;
+  }
+}
+
+@utility animate-shimmer-sweep {
+  animation: shimmer-sweep 3.5s linear infinite;
+}
+
+@keyframes shimmer-sweep-fast {
+  0% {
+    background-position: 120% center;
+  }
+  100% {
+    background-position: -20% center;
+  }
+}
+
+@utility animate-shimmer-sweep-fast {
+  animation: shimmer-sweep-fast 1.4s linear infinite;
+}
