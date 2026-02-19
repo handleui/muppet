@@ -1,197 +1,157 @@
-import { streamText } from "ai";
+import { streamText, stepCountIs } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
 import { invoke } from "@tauri-apps/api/core";
-import type { LettaProvider } from "@letta-ai/vercel-ai-sdk-provider";
-import {
-  getLettaApiKey,
-  createLettaProvider,
-  createAgentForConversation,
-} from "./letta";
+import { getActiveTools } from "./mcp-clients";
+
+const MAX_OUTPUT_TOKENS = 4096;
+const MAX_TOOL_STEPS = 10;
+const API_KEY_PATTERN = /\b(sk-ant-|sk-)[A-Za-z0-9_-]{10,}\b/g;
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
 
 export interface StreamCallbacks {
   onToken: (content: string) => void;
-  onDone?: (fullContent: string) => void;
+  onDone?: (fullContent: string, model: string) => void;
   onError?: (message: string) => void;
+  onToolCall?: (toolName: string, args: unknown) => void;
 }
 
-interface ConversationRecord {
-  id: string;
-  letta_agent_id: string | null;
-}
-
-let cachedProvider: { keyHash: string; provider: LettaProvider } | null = null;
-const agentIdCache = new Map<string, string>();
-
-async function hashKey(key: string): Promise<string> {
-  const data = new TextEncoder().encode(key);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function getOrCreateProvider(apiKey: string): Promise<LettaProvider> {
-  const hash = await hashKey(apiKey);
-  if (cachedProvider?.keyHash === hash) {
-    return cachedProvider.provider;
-  }
-  const provider = createLettaProvider(apiKey);
-  cachedProvider = { keyHash: hash, provider };
-  return provider;
-}
-
-const pendingAgentCreation = new Map<string, Promise<string>>();
-
-export function clearProviderCache(): void {
-  cachedProvider = null;
-  agentIdCache.clear();
-}
-
-export async function storeLettaApiKey(apiKey: string): Promise<void> {
-  await invoke("store_api_key", { provider: "letta", apiKey });
-  clearProviderCache();
-}
-
-export async function deleteLettaApiKey(): Promise<void> {
-  await invoke("delete_api_key", { provider: "letta" });
-  clearProviderCache();
-}
-
-async function resolveAgentId(
-  conversationId: string,
-  provider: LettaProvider
-): Promise<string> {
-  const cached = agentIdCache.get(conversationId);
-  if (cached) {
-    return cached;
-  }
-
-  const pending = pendingAgentCreation.get(conversationId);
-  if (pending) {
-    return pending;
-  }
-
-  const promise = resolveAgentIdUncached(conversationId, provider);
-  pendingAgentCreation.set(conversationId, promise);
-  try {
-    return await promise;
-  } finally {
-    pendingAgentCreation.delete(conversationId);
-  }
-}
-
-async function resolveAgentIdUncached(
-  conversationId: string,
-  provider: LettaProvider
-): Promise<string> {
-  const conversation = await invoke<ConversationRecord>("get_conversation", {
-    id: conversationId,
+async function fetchAnthropicKey(): Promise<string> {
+  const apiKey = await invoke<string | null>("get_api_key", {
+    provider: "anthropic",
   });
-
-  if (conversation.letta_agent_id) {
-    agentIdCache.set(conversationId, conversation.letta_agent_id);
-    return conversation.letta_agent_id;
+  if (!apiKey) {
+    throw new Error(
+      "Anthropic API key not configured. Use store_api_key to set it."
+    );
   }
-
-  const agentId = await createAgentForConversation(provider, conversationId);
-  agentIdCache.set(conversationId, agentId);
-  return agentId;
+  return apiKey;
 }
 
-function saveAssistantMessage(
+async function saveAssistantMessage(
   conversationId: string,
-  content: string
-): Promise<unknown> {
-  return invoke("save_message", {
+  content: string,
+  model: string,
+  tokensIn: number | null,
+  tokensOut: number | null
+): Promise<void> {
+  await invoke("save_message", {
     conversationId,
     role: "assistant",
     content,
-    model: null,
-    tokensIn: null,
-    tokensOut: null,
+    model,
+    tokensIn,
+    tokensOut,
   });
 }
 
-const REDACT_PATTERNS: RegExp[] = [
-  /\b(sk[-_]ant[-_]|sk[-_]|letta[-_]|exa[-_]|xai[-_]|key[-_])[A-Za-z0-9_-]{10,}\b/g,
-  /\b(Bearer|Basic|Token)\s+[A-Za-z0-9_\-./+=]{10,}\b/g,
-  /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-];
-
-function redactTokens(message: string): string {
-  let safe = message;
-  for (const pattern of REDACT_PATTERNS) {
-    pattern.lastIndex = 0; // Reset stateful /g flag before each use
-    safe = safe.replace(pattern, "[REDACTED]");
-  }
-  return safe;
+function sanitizeErrorMessage(message: string): string {
+  return message.replace(API_KEY_PATTERN, "[REDACTED]");
 }
 
-async function executeStream(
+async function handleAbort(
   conversationId: string,
-  prompt: string,
-  callbacks: StreamCallbacks,
-  abortSignal: AbortSignal,
-  chunks: string[]
-): Promise<void> {
-  const apiKey = await getLettaApiKey();
-  const letta = await getOrCreateProvider(apiKey);
-  const agentId = await resolveAgentId(conversationId, letta);
-
-  const result = streamText({
-    model: letta(),
-    providerOptions: {
-      letta: { agent: { id: agentId, streamTokens: true } },
-    },
-    prompt,
-    abortSignal,
-  });
-
-  for await (const chunk of result.textStream) {
-    chunks.push(chunk);
-    callbacks.onToken(chunk);
-  }
-
-  const fullContent = chunks.join("");
-  await saveAssistantMessage(conversationId, fullContent);
-  callbacks.onDone?.(fullContent);
-}
-
-async function handleStreamError(
-  err: unknown,
-  conversationId: string,
-  chunks: string[],
+  fullContent: string,
+  model: string,
   callbacks: StreamCallbacks
 ): Promise<void> {
-  if (err instanceof Error && err.name === "AbortError") {
-    const fullContent = chunks.join("");
-    if (fullContent) {
-      await saveAssistantMessage(conversationId, fullContent).catch(() => {
-        // Best-effort save on abort
-      });
-    }
-    callbacks.onDone?.(fullContent);
-    return;
+  if (fullContent) {
+    await saveAssistantMessage(
+      conversationId,
+      fullContent,
+      model,
+      null,
+      null
+    ).catch(() => undefined);
   }
+  callbacks.onDone?.(fullContent, model);
+}
 
-  const raw = err instanceof Error ? err.message : "Stream failed";
-  callbacks.onError?.(redactTokens(raw));
+async function runStream(
+  conversationId: string,
+  messages: ChatMessage[],
+  model: string,
+  callbacks: StreamCallbacks,
+  abortSignal: AbortSignal
+): Promise<string> {
+  const apiKey = await fetchAnthropicKey();
+  const anthropic = createAnthropic({ apiKey });
+  const { tools, cleanup } = await getActiveTools();
+  const hasTools = Object.keys(tools).length > 0;
+
+  try {
+    const result = streamText({
+      model: anthropic(model),
+      messages,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      abortSignal,
+      ...(hasTools && {
+        tools,
+        stopWhen: stepCountIs(MAX_TOOL_STEPS),
+        onStepFinish: ({ toolCalls }) => {
+          for (const tc of toolCalls) {
+            callbacks.onToolCall?.(tc.toolName, tc.input);
+          }
+        },
+      }),
+    });
+
+    let fullContent = "";
+    for await (const chunk of result.textStream) {
+      fullContent += chunk;
+      callbacks.onToken(chunk);
+    }
+
+    const usage = await Promise.resolve(result.usage).catch(() => ({
+      inputTokens: null,
+      outputTokens: null,
+    }));
+
+    await saveAssistantMessage(
+      conversationId,
+      fullContent,
+      model,
+      usage.inputTokens ?? null,
+      usage.outputTokens ?? null
+    );
+
+    callbacks.onDone?.(fullContent, model);
+    return fullContent;
+  } finally {
+    await cleanup().catch(() => undefined);
+  }
 }
 
 export function streamChat(
   conversationId: string,
-  prompt: string,
+  messages: ChatMessage[],
+  model: string,
   callbacks: StreamCallbacks
 ): { promise: Promise<void>; cancel: () => void } {
   const abortController = new AbortController();
-  const chunks: string[] = [];
+  let fullContent = "";
 
-  const promise = executeStream(
+  const promise = runStream(
     conversationId,
-    prompt,
+    messages,
+    model,
     callbacks,
-    abortController.signal,
-    chunks
-  ).catch((err) => handleStreamError(err, conversationId, chunks, callbacks));
+    abortController.signal
+  )
+    .then((content) => {
+      fullContent = content;
+    })
+    .catch(async (err) => {
+      if (err.name === "AbortError") {
+        await handleAbort(conversationId, fullContent, model, callbacks);
+        return;
+      }
+      const safe = sanitizeErrorMessage(err.message ?? "Stream failed");
+      callbacks.onError?.(safe);
+    });
 
   return {
     promise,

@@ -30,6 +30,8 @@ tokio = { version = "1", features = ["rt"] }
 url = "2"
 iota_stronghold = "2.1"
 zeroize = "1"
+tiny_http = "0.12"
+urlencoding = "2"
 
 [profile.release]
 # Optimize for size with LTO for smaller, faster desktop app binary

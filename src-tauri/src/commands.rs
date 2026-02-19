@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::arcade::{self, ArcadeClient};
 use crate::error::AppError;
 use crate::exa::{self, ContentOptions, SearchCategory};
 use crate::fal;
+use crate::oauth_callback::OAuthSessionHandle;
 use crate::placement::{self, PlacementMode, PlacementState};
 use crate::secrets::SecretStore;
 use serde::{Deserialize, Serialize};
@@ -51,6 +53,9 @@ pub struct Generation {
     pub inference_time_ms: Option<f64>,
     pub created_at: String,
 }
+
+/// Tracks active OAuth callback sessions so they can be shut down early.
+pub struct OAuthSessions(pub Mutex<HashMap<String, OAuthSessionHandle>>);
 
 const MAX_TITLE_LENGTH: usize = 500;
 const MAX_CONTENT_LENGTH: usize = 100_000;
@@ -156,7 +161,7 @@ fn validate_setting_key(key: &str) -> Result<(), AppError> {
 }
 
 fn validate_provider(provider: &str) -> Result<(), AppError> {
-    validate_identifier(provider, MAX_PROVIDER_LENGTH, "Provider name", &['-', '_'])
+    validate_identifier(provider, MAX_PROVIDER_LENGTH, "Provider name", &['-', '_', ':'])
 }
 
 fn read_cache<T>(lock: &RwLock<T>) -> Result<std::sync::RwLockReadGuard<'_, T>, AppError> {
@@ -1130,6 +1135,222 @@ pub async fn list_generations(
         query = query.bind(cid);
     }
     Ok(query.bind(limit).bind(offset).fetch_all(pool).await?)
+}
+
+// ── MCP Server Commands ──
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct McpServer {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub auth_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+const MAX_MCP_NAME_LENGTH: usize = 100;
+const MAX_MCP_URL_LENGTH: usize = 2000;
+
+fn validate_mcp_name(name: &str) -> Result<(), AppError> {
+    validate_non_empty_bounded(name, MAX_MCP_NAME_LENGTH, "Server name")?;
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(AppError::Validation(
+            "Server name may only contain alphanumeric characters, hyphens, and underscores".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_url(url: &str) -> Result<(), AppError> {
+    validate_non_empty_bounded(url, MAX_MCP_URL_LENGTH, "URL")?;
+
+    let is_https = url.starts_with("https://");
+    let is_loopback_http = url.starts_with("http://127.0.0.1")
+        || url.starts_with("http://localhost")
+        || url.starts_with("http://[::1]");
+
+    if !is_https && !is_loopback_http {
+        return Err(AppError::Validation(
+            "URL must use https:// (http:// is only allowed for loopback addresses)".into(),
+        ));
+    }
+    if url.contains('@') {
+        return Err(AppError::Validation(
+            "URL must not contain credentials; use API key auth instead".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_auth_type(auth_type: &str) -> Result<(), AppError> {
+    if !matches!(auth_type, "none" | "api_key" | "oauth") {
+        return Err(AppError::Validation(
+            "Auth type must be 'none', 'api_key', or 'oauth'".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_api_key(auth_type: &str, api_key: &Option<String>) -> Result<(), AppError> {
+    if auth_type != "api_key" {
+        return Ok(());
+    }
+    let key = api_key.as_ref().ok_or_else(|| {
+        AppError::Validation("API key is required for api_key auth type".into())
+    })?;
+    if key.trim().is_empty() || key.len() > MAX_API_KEY_LENGTH {
+        return Err(AppError::Validation("Invalid API key".into()));
+    }
+    Ok(())
+}
+
+async fn store_mcp_secret(store: &Arc<SecretStore>, server_id: &str, api_key: String) -> Result<(), AppError> {
+    let store_key = format!("api_key:mcp:{server_id}");
+    let store = Arc::clone(store);
+    let key_bytes = api_key.into_bytes();
+    blocking(move || store.insert(&store_key, key_bytes)).await
+}
+
+async fn delete_mcp_secret_entries(store: &Arc<SecretStore>, server_id: &str) -> Result<(), AppError> {
+    let store = Arc::clone(store);
+    let sid = server_id.to_string();
+    blocking(move || {
+        for suffix in ["", ":tokens", ":client_info", ":code_verifier"] {
+            let key = format!("api_key:mcp:{sid}{suffix}");
+            store.remove(&key)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+#[instrument(skip(app, api_key))]
+pub async fn add_mcp_server(
+    app: AppHandle,
+    name: String,
+    url: String,
+    auth_type: Option<String>,
+    api_key: Option<String>,
+) -> Result<McpServer, AppError> {
+    validate_mcp_name(&name)?;
+    validate_mcp_url(&url)?;
+    let auth_type = auth_type.unwrap_or_else(|| "none".to_string());
+    validate_mcp_auth_type(&auth_type)?;
+    validate_mcp_api_key(&auth_type, &api_key)?;
+
+    let pool = get_pool(&app)?;
+    let id = gen_id();
+
+    let server = sqlx::query_as::<Sqlite, McpServer>(
+        "INSERT INTO mcp_servers (id, name, url, auth_type) VALUES (?, ?, ?, ?)
+         RETURNING id, name, url, auth_type, created_at, updated_at",
+    )
+    .bind(&id)
+    .bind(&name)
+    .bind(&url)
+    .bind(&auth_type)
+    .fetch_one(pool)
+    .await?;
+
+    if let Some(key) = api_key {
+        let store = get_secret_store(&app)?;
+        store_mcp_secret(&store, &id, key).await?;
+        info!(server_name = %name, "stored MCP API key");
+    }
+
+    info!(server_name = %name, auth_type = %auth_type, "added MCP server");
+    Ok(server)
+}
+
+#[tauri::command]
+pub async fn list_mcp_servers(app: AppHandle) -> Result<Vec<McpServer>, AppError> {
+    let pool = get_pool(&app)?;
+    Ok(sqlx::query_as::<Sqlite, McpServer>(
+        "SELECT id, name, url, auth_type, created_at, updated_at
+         FROM mcp_servers ORDER BY name ASC",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+#[tauri::command]
+#[instrument(skip(app))]
+pub async fn delete_mcp_server(app: AppHandle, id: String) -> Result<(), AppError> {
+    validate_uuid(&id)?;
+
+    let pool = get_pool(&app)?;
+    let result = sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
+        .bind(&id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("MCP server"));
+    }
+
+    // Shut down any active OAuth session for this server
+    match app.state::<OAuthSessions>().0.lock() {
+        Ok(mut map) => {
+            if let Some(handle) = map.remove(&id) {
+                handle.shutdown();
+            }
+        }
+        Err(e) => {
+            error!(error = %e, "failed to lock OAuth sessions — callback server may remain active");
+        }
+    }
+
+    let store = get_secret_store(&app)?;
+    delete_mcp_secret_entries(&store, &id).await?;
+    info!("deleted MCP server and secret entries");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_oauth_callback_server(
+    app: AppHandle,
+    expected_state: String,
+    server_id: Option<String>,
+) -> Result<u16, AppError> {
+    if expected_state.is_empty() || expected_state.len() > 256 {
+        return Err(AppError::Validation(
+            "OAuth state parameter must be 1-256 characters".into(),
+        ));
+    }
+    if !expected_state
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(AppError::Validation(
+            "OAuth state parameter contains invalid characters".into(),
+        ));
+    }
+    let (port, handle) =
+        crate::oauth_callback::start_callback_server(app.clone(), 300, expected_state)
+            .map_err(AppError::Internal)?;
+
+    // Track session by server ID so it can be shut down when the server is deleted
+    if let Some(id) = server_id {
+        if let Ok(mut map) = app.state::<OAuthSessions>().0.lock() {
+            map.insert(id, handle);
+        }
+    }
+
+    Ok(port)
+}
+
+#[tauri::command]
+pub fn shutdown_oauth_session(app: AppHandle, server_id: String) {
+    if let Ok(mut map) = app.state::<OAuthSessions>().0.lock() {
+        if let Some(handle) = map.remove(&server_id) {
+            handle.shutdown();
+        }
+    }
 }
 
 // ── Global Hotkey ──

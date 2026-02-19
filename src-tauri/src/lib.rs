@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod exa;
 mod fal;
+mod oauth_callback;
 mod placement;
 mod secrets;
 mod util;
@@ -132,6 +133,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(commands::ExaKeyCache(std::sync::RwLock::new(cached_exa_key)));
     app.manage(commands::FalKeyCache(std::sync::RwLock::new(cached_fal_key)));
     app.manage(commands::SearchRateLimiter(std::sync::Mutex::new(None)));
+    app.manage(commands::OAuthSessions(std::sync::Mutex::new(
+        std::collections::HashMap::new(),
+    )));
     app.manage(std::sync::RwLock::new(arcade_client));
 
     // Register the Stronghold plugin (still needed for its JS API surface).
@@ -238,6 +242,11 @@ pub fn run() {
             commands::arcade_authorize_tool,
             commands::arcade_check_auth_status,
             commands::arcade_execute_tool,
+            commands::add_mcp_server,
+            commands::list_mcp_servers,
+            commands::delete_mcp_server,
+            commands::start_oauth_callback_server,
+            commands::shutdown_oauth_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running muppet");
