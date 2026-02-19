@@ -40,16 +40,13 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Lint
-        run: bun run check
-
-      - name: Check types & build (PR)
+      - name: Lint & check types & build (PR)
         if: github.event_name == 'pull_request'
-        run: bun turbo run check-types build --affected
+        run: bun turbo run lint check-types build --affected
 
-      - name: Check types & build (main)
+      - name: Lint & check types & build (main)
         if: github.ref == 'refs/heads/main'
-        run: bun turbo run check-types build
+        run: bun turbo run lint check-types build
 
   rust:
     runs-on: ubuntu-latest

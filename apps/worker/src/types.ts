@@ -50,3 +50,26 @@ export interface ScrapeResponse {
   title: string | null;
   sourceURL: string;
 }
+
+// ── Conversations ──
+
+export interface Conversation {
+  id: string;
+  title: string;
+  letta_agent_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Messages ──
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  model: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  created_at: string;
+}

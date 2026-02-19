@@ -20,6 +20,15 @@ cd apps/desktop && bun run tauri build
 
 Rust backend compiles on `tauri dev` automatically. Frontend is Vite on port 1420.
 
+## Dev URLs (portless)
+
+The worker app uses [portless](https://github.com/nicepkg/portless) for stable dev URLs (no port conflicts):
+
+- **Worker API**: `http://nosis-api.localhost:1355` (via `portless nosis-api`)
+- **Desktop Vite**: `http://localhost:1420` (direct, consumed by Tauri webview — not proxied)
+
+Bypass portless with `PORTLESS=0 bun run dev`.
+
 ## Project Structure
 
 - `apps/desktop/` — Tauri desktop app (frontend + Rust backend)

@@ -8,7 +8,9 @@
     "build": "vite build",
     "check-types": "tsc --noEmit",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "lint": "ultracite check",
+    "fix": "ultracite fix"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",
