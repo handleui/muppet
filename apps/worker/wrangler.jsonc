@@ -4,9 +4,6 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-12-01",
   "compatibility_flags": ["nodejs_compat"],
-  "vars": {
-    "BETTER_AUTH_URL": "http://nosis-api.localhost:1355"
-  },
   "d1_databases": [
     {
       "binding": "DB",
