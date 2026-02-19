@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 
-type Bindings = {
+interface Bindings {
   ENVIRONMENT?: string;
-};
+}
 
 const app = new Hono<{ Bindings: Bindings }>();
 
