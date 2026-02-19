@@ -26,19 +26,22 @@ export function redactSecrets(
     .replace(LONG_TOKEN_PATTERN, "[REDACTED]");
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === "string") {
+    return err;
+  }
+  return "Unknown error";
+}
+
 /** Produce a safe, truncated string from an unknown error value for logging. */
 export function sanitizeError(
   err: unknown,
   knownSecrets?: readonly string[]
 ): string {
-  let message = "Unknown error";
-  if (err instanceof Error) {
-    message = err.message;
-  } else if (typeof err === "string") {
-    message = err;
-  }
-
-  const redacted = redactSecrets(message, knownSecrets);
+  const redacted = redactSecrets(errorMessage(err), knownSecrets);
   return redacted.length > MAX_SANITIZED_LENGTH
     ? `${redacted.slice(0, MAX_SANITIZED_LENGTH)}...`
     : redacted;

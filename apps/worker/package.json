@@ -9,15 +9,19 @@
     "check-types": "tsc --noEmit",
     "deploy": "wrangler deploy",
     "lint": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@nosis/provider": "workspace:*",
     "ai": "^6.0.87",
+    "better-auth": "^1.4.18",
+    "drizzle-orm": "^0.45.1",
     "hono": "^4.7.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250214.0",
+    "drizzle-kit": "^0.31.9",
     "typescript": "^5.9.0",
     "wrangler": "^4.0.0"
   }

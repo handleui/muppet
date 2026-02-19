@@ -4,11 +4,21 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-12-01",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BETTER_AUTH_URL": "http://nosis-api.localhost:1355"
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "nosis-db",
-      "database_id": "89f68beb-9a18-436a-86c3-5d87aea89c39"
+      "database_id": "89f68beb-9a18-436a-86c3-5d87aea89c39",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "dea02186d8364914bc48e7100f97d235"
     }
   ]
 }
