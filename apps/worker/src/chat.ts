@@ -9,7 +9,6 @@ import {
 import { HTTPException } from "hono/http-exception";
 import {
   type AppDatabase,
-  getAgentIdAndSaveMessage,
   getConversationAgent,
   getConversationAgentId,
   saveMessageBatch,
@@ -170,14 +169,11 @@ export async function streamChat(
   ctx: ExecutionContext,
   env: Bindings
 ): Promise<Response> {
-  // Single D1 batch: fetch agent ID, touch updated_at, and save user message
-  // in one round-trip (saves ~5-10ms vs two sequential D1 calls).
-  const existingAgentId = await getAgentIdAndSaveMessage(
+  // Lightweight lookup — verifies ownership and fetches agent ID.
+  const existingAgentId = await getConversationAgentId(
     db,
     conversationId,
-    userId,
-    crypto.randomUUID(),
-    content
+    userId
   );
   const provider = createProvider(lettaApiKey);
 
@@ -191,8 +187,22 @@ export async function streamChat(
     lettaApiKey
   );
 
-  // Load MCP tools (independent of agent resolution)
-  const { tools: mcpTools, cleanup } = await getActiveTools(db, env, userId);
+  // Save user message and load MCP tools in parallel, both after agent resolution
+  // succeeds — if resolveAgentId throws, no message is persisted and the request
+  // is safely retriable without duplicates.
+  const [, { tools: mcpTools, cleanup }] = await Promise.all([
+    saveMessageBatch(
+      db,
+      crypto.randomUUID(),
+      conversationId,
+      "user",
+      content,
+      null,
+      0,
+      0
+    ),
+    getActiveTools(db, env, userId),
+  ]);
 
   // Request-scoped cache: avoids repeated D1 lookups when the main agent calls
   // the research tool multiple times within a single conversation turn.
@@ -275,9 +285,13 @@ export async function streamChat(
     },
     prompt: content,
     tools,
-    // Bound the number of agentic tool-call/response cycles in one request.
-    // Each step can still invoke multiple tools in parallel, but the total
-    // number of round-trips is capped to avoid runaway cost and latency.
+    // Two-layer defense against unbounded loops:
+    // 1. researchCallCount (primary) — enforced per-tool-call inside execute(),
+    //    works correctly even when the model fires multiple parallel calls in
+    //    one step because the counter increments synchronously before any await.
+    // 2. stepCountIs (secondary) — caps total model round-trips as a safety net
+    //    against non-research agentic loops. Set to MAX + 1 because the first
+    //    step is the initial prompt, so N+1 steps = N tool-response cycles.
     stopWhen: stepCountIs(MAX_RESEARCH_CALLS_PER_REQUEST + 1),
     onError({ error }) {
       console.error("streamText error:", sanitizeError(error, [lettaApiKey]));
