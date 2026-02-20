@@ -141,3 +141,19 @@ export const messages = sqliteTable(
     ),
   ]
 );
+
+/** Tracks specialist agents per conversation+role.
+ *  The composite PK (conversation_id, role) doubles as an index covering
+ *  lookups by conversation_id alone (SQLite uses leftmost prefix). */
+export const conversationAgents = sqliteTable(
+  "conversation_agents",
+  {
+    conversation_id: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    letta_agent_id: text("letta_agent_id").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [primaryKey({ columns: [table.conversation_id, table.role] })]
+);
