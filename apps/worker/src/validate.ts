@@ -175,6 +175,151 @@ export function validateProvider(value: unknown): ApiProvider {
   return value as ApiProvider;
 }
 
+// ── MCP Server Validation ──
+
+const MCP_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+const MAX_MCP_NAME_LENGTH = 100;
+const MAX_MCP_URL_LENGTH = 2000;
+const VALID_MCP_AUTH_TYPES: ReadonlySet<string> = new Set(["none", "api_key"]);
+
+// ── SSRF: Private / Reserved Network Detection ──
+
+const BLOCKED_MCP_HOSTNAMES: ReadonlySet<string> = new Set([
+  "localhost",
+  "metadata.google.internal",
+]);
+
+function isPrivateMcpIPv4(hostname: string): boolean {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const octets = parts.map(Number);
+  if (octets.some((o) => Number.isNaN(o) || o < 0 || o > 255)) {
+    return false;
+  }
+
+  const [a, b] = octets;
+  if (a === 127) {
+    return true; // 127.0.0.0/8 loopback
+  }
+  if (a === 10) {
+    return true; // 10.0.0.0/8 private
+  }
+  if (a === 172 && b >= 16 && b <= 31) {
+    return true; // 172.16.0.0/12 private
+  }
+  if (a === 192 && b === 168) {
+    return true; // 192.168.0.0/16 private
+  }
+  if (a === 169 && b === 254) {
+    return true; // 169.254.0.0/16 link-local / cloud metadata
+  }
+  if (a === 100 && b >= 64 && b <= 127) {
+    return true; // 100.64.0.0/10 CGNAT
+  }
+  if (a === 0) {
+    return true; // 0.0.0.0/8
+  }
+
+  return false;
+}
+
+function isPrivateMcpIPv6(hostname: string): boolean {
+  const raw =
+    hostname.startsWith("[") && hostname.endsWith("]")
+      ? hostname.slice(1, -1)
+      : hostname;
+  const lower = raw.toLowerCase();
+
+  if (lower === "::1") {
+    return true; // loopback
+  }
+  if (lower.startsWith("fe80:") || lower.startsWith("fe80%")) {
+    return true; // link-local
+  }
+  if (lower.startsWith("::ffff:") && isPrivateMcpIPv4(lower.slice(7))) {
+    return true; // mapped IPv4
+  }
+
+  return false;
+}
+
+function isBlockedMcpHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return (
+    BLOCKED_MCP_HOSTNAMES.has(lower) ||
+    isPrivateMcpIPv4(lower) ||
+    isPrivateMcpIPv6(lower)
+  );
+}
+
+export type McpAuthType = "none" | "api_key";
+
+export function validateMcpName(value: unknown): string {
+  if (typeof value !== "string") {
+    badRequest("MCP server name must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_MCP_NAME_LENGTH) {
+    badRequest(`MCP server name must be 1-${MAX_MCP_NAME_LENGTH} characters`);
+  }
+  if (!MCP_NAME_REGEX.test(trimmed)) {
+    badRequest(
+      "MCP server name must contain only alphanumeric characters, hyphens, and underscores"
+    );
+  }
+  return trimmed;
+}
+
+export function validateMcpUrl(value: unknown): string {
+  if (typeof value !== "string") {
+    badRequest("MCP server URL must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_MCP_URL_LENGTH) {
+    badRequest(`MCP server URL must be 1-${MAX_MCP_URL_LENGTH} characters`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    badRequest("MCP server URL is not a valid URL");
+  }
+
+  // Reject embedded credentials
+  if (parsed.username || parsed.password) {
+    badRequest("MCP server URL must not contain credentials");
+  }
+
+  // Require HTTPS — no HTTP exceptions. MCP servers run on the public
+  // internet; this is a Cloudflare Worker, not a desktop app, so "localhost"
+  // loopback exceptions are SSRF vectors (localhost resolves to the Worker's
+  // own network context / cloud metadata endpoints).
+  if (parsed.protocol !== "https:") {
+    badRequest("MCP server URL must use HTTPS");
+  }
+
+  // Block private / reserved hostnames and IPs (defense-in-depth against
+  // DNS-rebinding or crafted URLs that resolve to internal services)
+  if (isBlockedMcpHost(parsed.hostname)) {
+    badRequest("MCP server URL must not target private or reserved addresses");
+  }
+
+  return trimmed;
+}
+
+export function validateMcpAuthType(value: unknown): McpAuthType {
+  if (typeof value !== "string" || !VALID_MCP_AUTH_TYPES.has(value)) {
+    badRequest("auth_type must be 'none' or 'api_key'");
+  }
+  return value as McpAuthType;
+}
+
+// ── API Key Validation ──
+
 export function validateApiKeyInput(value: unknown): string {
   if (typeof value !== "string") {
     badRequest("apiKey must be a string");
