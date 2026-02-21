@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import {
-  ApiError,
   conversationChatPath,
   listConversationMessages,
   toUiMessages,
-} from "@nosis/lib/worker-api";
+} from "@nosis/features/chat/api/worker-chat-api";
+import { ApiError } from "@nosis/features/shared/api/worker-http-client";
 
 const HISTORY_RETRY_DELAY_MS = 300;
 
@@ -27,18 +27,65 @@ function toHistoryError(error: unknown): Error {
     : new Error("Failed to load chat history");
 }
 
+function lastUserText(messages: UIMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user") {
+      continue;
+    }
+    const text = message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("")
+      .trim();
+    return text;
+  }
+  return "";
+}
+
+function skillIdsFromRequestMetadata(metadata: unknown): string[] | undefined {
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    !("skillIds" in metadata)
+  ) {
+    return undefined;
+  }
+
+  const value = (metadata as { skillIds?: unknown }).skillIds;
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const parsed = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return parsed.length > 0 ? parsed : undefined;
+}
+
 export function useNosisChat(conversationId: string) {
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: conversationChatPath(conversationId),
         credentials: "include",
-        prepareSendMessagesRequest: ({ messages }) => {
-          const lastMessage = messages.at(-1);
-          const textPart = lastMessage?.parts.find((p) => p.type === "text");
+        prepareSendMessagesRequest: ({
+          messages,
+          trigger,
+          messageId,
+          requestMetadata,
+        }) => {
+          const skillIds = skillIdsFromRequestMetadata(requestMetadata);
           return {
             body: {
-              content: textPart?.text ?? "",
+              messages,
+              trigger,
+              message_id: messageId,
+              ...(skillIds ? { skill_ids: skillIds } : {}),
+              // Legacy fallback field for older backend instances.
+              content: lastUserText(messages),
             },
           };
         },

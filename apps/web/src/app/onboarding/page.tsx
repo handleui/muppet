@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@nosis/ui/button";
 import AuthGuard from "@nosis/components/auth-guard";
-import { API_URL } from "@nosis/lib/auth-client";
+import { API_URL } from "@nosis/lib/api-config";
 
 const PROVIDERS = [
   {

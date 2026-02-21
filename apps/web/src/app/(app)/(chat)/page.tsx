@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import CodeHomeClient from "../code/code-home-client";
+import ChatHomeClient from "./chat/chat-home-client";
 
 export const metadata: Metadata = {
   title: "Chat",
-  description: "Start and manage a code conversation workspace.",
+  description: "Start a new chat thread.",
 };
 
 export default function ChatHome() {
-  return <CodeHomeClient />;
+  return <ChatHomeClient />;
 }

@@ -174,7 +174,7 @@ export const conversations = sqliteTable(
       enum: ["default", "sandbox"],
     })
       .notNull()
-      .default("default"),
+      .default("sandbox"),
     office_id: text("office_id").references(() => offices.id, {
       onDelete: "set null",
     }),

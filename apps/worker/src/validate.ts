@@ -1,3 +1,8 @@
+import {
+  LEGACY_DEFAULT_EXECUTION_TARGET,
+  SANDBOX_EXECUTION_TARGET,
+  type CloudExecutionTarget,
+} from "@nosis/agent-runtime";
 import { HTTPException } from "hono/http-exception";
 
 const MAX_API_KEY_LENGTH = 500;
@@ -13,12 +18,15 @@ const MAX_CONTENT_LENGTH = 100_000;
 const MAX_MODEL_LENGTH = 100;
 const MAX_AGENT_ID_LENGTH = 200;
 const MAX_TOKEN_COUNT = 10_000_000; // 10 M — well above any model's context window
+const MAX_CHAT_MESSAGES = 200;
+const MAX_CHAT_SKILL_IDS = 12;
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
-const VALID_EXECUTION_TARGETS: ReadonlySet<string> = new Set([
-  "default",
-  "sandbox",
+const VALID_CHAT_TRIGGERS: ReadonlySet<string> = new Set([
+  "submit-message",
+  "regenerate-message",
 ]);
+const CHAT_SKILL_ID_REGEX = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const VALID_WORKSPACE_KINDS: ReadonlySet<string> = new Set(["cloud"]);
 const VALID_WORKSPACE_STATUSES: ReadonlySet<string> = new Set([
   "ready",
@@ -108,6 +116,13 @@ export function validateContent(value: unknown): string {
   return value;
 }
 
+export function validateOptionalContent(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return validateContent(value);
+}
+
 export function validateModel(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
@@ -155,17 +170,67 @@ export function validateAgentId(value: unknown): string {
   return value;
 }
 
-export type ConversationExecutionTarget = "default" | "sandbox";
+export type ConversationExecutionTarget = CloudExecutionTarget;
+export type ChatRequestTrigger = "submit-message" | "regenerate-message";
 export type WorkspaceKind = "cloud";
 export type WorkspaceStatus = "ready" | "provisioning" | "error";
+
+export function validateChatTrigger(value: unknown): ChatRequestTrigger {
+  if (value === undefined || value === null) {
+    return "submit-message";
+  }
+  if (typeof value !== "string" || !VALID_CHAT_TRIGGERS.has(value)) {
+    badRequest("trigger must be one of: submit-message, regenerate-message");
+  }
+  return value as ChatRequestTrigger;
+}
+
+export function validateChatSkillIds(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    badRequest("skill_ids must be an array of strings");
+  }
+  if (value.length > MAX_CHAT_SKILL_IDS) {
+    badRequest(`skill_ids supports at most ${MAX_CHAT_SKILL_IDS} entries`);
+  }
+
+  const skillIds: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      badRequest("skill_ids must be an array of strings");
+    }
+    const trimmed = item.trim();
+    if (!CHAT_SKILL_ID_REGEX.test(trimmed)) {
+      badRequest(
+        "Each skill ID must match /^[a-z0-9][a-z0-9._-]{0,63}$/ format"
+      );
+    }
+    skillIds.push(trimmed);
+  }
+  return skillIds;
+}
+
+export function validateChatMessageCount(count: number): void {
+  if (!Number.isInteger(count) || count < 0) {
+    badRequest("messages must be a valid array");
+  }
+  if (count > MAX_CHAT_MESSAGES) {
+    badRequest(`messages supports at most ${MAX_CHAT_MESSAGES} items`);
+  }
+}
 
 export function validateExecutionTarget(
   value: unknown
 ): ConversationExecutionTarget {
-  if (typeof value !== "string" || !VALID_EXECUTION_TARGETS.has(value)) {
-    badRequest("execution_target must be one of: default, sandbox");
+  if (
+    value === SANDBOX_EXECUTION_TARGET ||
+    value === LEGACY_DEFAULT_EXECUTION_TARGET
+  ) {
+    return SANDBOX_EXECUTION_TARGET;
   }
-  return value as ConversationExecutionTarget;
+  badRequest(`execution_target must be '${SANDBOX_EXECUTION_TARGET}'`);
 }
 
 function parseOwnerRepoPath(

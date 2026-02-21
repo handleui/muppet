@@ -1,17 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SANDBOX_EXECUTION_TARGET } from "@nosis/agent-runtime";
 import {
-  ApiError,
+  type Conversation,
+  type ConversationExecutionTarget,
   createConversation,
   listConversations,
-  type ConversationExecutionTarget,
-  type Conversation,
-} from "@nosis/lib/worker-api";
+} from "@nosis/features/chat/api/worker-chat-api";
+import { ApiError } from "@nosis/features/shared/api/worker-http-client";
 
 interface UseConversationsOptions {
   executionTarget?: ConversationExecutionTarget;
-  workspaceId?: string;
+  workspaceId?: string | null;
   officeId?: string;
 }
 
@@ -24,7 +25,7 @@ interface UseConversationsResult {
   createNewConversation: (options?: {
     title?: string;
     executionTarget?: ConversationExecutionTarget;
-    workspaceId?: string;
+    workspaceId?: string | null;
     officeId?: string;
   }) => Promise<Conversation>;
 }
@@ -41,7 +42,8 @@ function toConversationListError(error: unknown): string {
 export function useConversations(
   options?: UseConversationsOptions
 ): UseConversationsResult {
-  const defaultExecutionTarget = options?.executionTarget;
+  const defaultExecutionTarget =
+    options?.executionTarget ?? SANDBOX_EXECUTION_TARGET;
   const defaultWorkspaceId = options?.workspaceId;
   const defaultOfficeId = options?.officeId;
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -101,7 +103,7 @@ export function useConversations(
     async (createOptions?: {
       title?: string;
       executionTarget?: ConversationExecutionTarget;
-      workspaceId?: string;
+      workspaceId?: string | null;
       officeId?: string;
     }) => {
       setIsCreating(true);

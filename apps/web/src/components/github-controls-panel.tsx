@@ -8,10 +8,13 @@ import {
   useState,
 } from "react";
 import { GitPullRequest } from "iconoir-react";
-import { useGithubControls } from "@nosis/hooks/use-github-controls";
+import type {
+  Project,
+  Workspace,
+} from "@nosis/features/code/api/worker-code-api";
+import { buildWorkspaceBranchName } from "@nosis/features/github/lib/git-ops";
+import { useGithubControls } from "@nosis/features/github/hooks/use-github-controls";
 import { Button } from "@nosis/ui/button";
-import { buildWorkspaceBranchName } from "@nosis/lib/git-ops";
-import type { Project, Workspace } from "@nosis/lib/worker-api";
 
 interface GithubControlsPanelProps {
   project: Project | null;
@@ -171,7 +174,7 @@ export default function GithubControlsPanel({
               {project.owner}/{project.repo}
             </p>
             <p className="font-normal text-[#808080] text-[11px] tracking-[-0.33px]">
-              Desktop Git Controls
+              GitHub Controls
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-[#c4f4d2] bg-[#ebffef] px-2 py-1">

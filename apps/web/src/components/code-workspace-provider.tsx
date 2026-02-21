@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useConversations } from "@nosis/hooks/use-conversations";
 import {
   createProject,
   createWorkspace,
@@ -19,7 +18,8 @@ import {
   type Workspace,
   type WorkspaceKind,
   type WorkspaceStatus,
-} from "@nosis/lib/worker-api";
+} from "@nosis/features/code/api/worker-code-api";
+import { useConversations } from "@nosis/features/chat/hooks/use-conversations";
 
 const SELECTED_PROJECT_STORAGE_KEY = "nosis.code.selected_project_id";
 const SELECTED_WORKSPACE_STORAGE_KEY = "nosis.code.selected_workspace_id";
@@ -196,12 +196,18 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
   }, [selectedProjectId, workspaces]);
 
   useEffect(() => {
+    if (isProjectsLoading) {
+      return;
+    }
     persistSelectedId(SELECTED_PROJECT_STORAGE_KEY, selectedProjectId);
-  }, [selectedProjectId]);
+  }, [isProjectsLoading, selectedProjectId]);
 
   useEffect(() => {
+    if (isWorkspacesLoading) {
+      return;
+    }
     persistSelectedId(SELECTED_WORKSPACE_STORAGE_KEY, selectedWorkspaceId);
-  }, [selectedWorkspaceId]);
+  }, [isWorkspacesLoading, selectedWorkspaceId]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -290,11 +296,11 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
   const createNewConversation = useCallback(
     async (options?: CreateConversationOptions) => {
       const executionTarget = options?.executionTarget ?? "sandbox";
-      const workspaceId =
-        options?.workspaceId ??
-        (executionTarget === "sandbox"
-          ? (selectedWorkspaceId ?? workspaces[0]?.id)
-          : undefined);
+      const hasWorkspaceOverride =
+        options !== undefined && Object.hasOwn(options, "workspaceId");
+      const workspaceId = hasWorkspaceOverride
+        ? (options?.workspaceId ?? null)
+        : (selectedWorkspaceId ?? workspaces[0]?.id ?? null);
 
       const response = await createConversation({
         title: options?.title,

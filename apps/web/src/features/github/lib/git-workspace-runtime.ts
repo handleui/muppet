@@ -1,21 +1,23 @@
-import {
-  ApiError,
-  type GithubBranch,
-  type GithubPullRequest,
-  type Project,
-  type Workspace,
-} from "@nosis/lib/worker-api";
+import type {
+  GithubBranch,
+  GithubPullRequest,
+} from "@nosis/features/github/api/worker-github-api";
+import type {
+  Project,
+  Workspace,
+} from "@nosis/features/code/api/worker-code-api";
+import { ApiError } from "@nosis/features/shared/api/worker-http-client";
 import {
   buildWorkspaceBranchName,
   createWorkspaceBranch,
   openPullRequest,
   parseGithubRepoUrl,
   type GithubRepoRef,
-} from "@nosis/lib/git-ops";
+} from "@nosis/features/github/lib/git-ops";
 
 const DEFAULT_BASE_BRANCH = "main";
 
-export type GitWorkspaceRuntimeTarget = "web" | "sandbox";
+export type GitWorkspaceRuntimeTarget = "web";
 
 export type GitWorkspaceErrorCode =
   | "branch_already_exists"

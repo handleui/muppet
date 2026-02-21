@@ -1,3 +1,4 @@
+import type { CloudExecutionTarget } from "@nosis/agent-runtime";
 import type {
   conversations,
   offices,
@@ -81,8 +82,9 @@ export interface ScrapeResponse {
 // ── Conversations ──
 
 export type Conversation = typeof conversations.$inferSelect;
-export type ConversationExecutionTarget =
+export type ConversationStoredExecutionTarget =
   (typeof conversations.$inferSelect)["execution_target"];
+export type ConversationExecutionTarget = CloudExecutionTarget;
 
 // ── Projects / Workspaces ──
 

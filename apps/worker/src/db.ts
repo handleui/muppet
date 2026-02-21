@@ -14,6 +14,7 @@ import type * as schema from "./schema";
 import type {
   Conversation,
   ConversationExecutionTarget,
+  ConversationStoredExecutionTarget,
   McpServer,
   McpServerScope,
   Message,
@@ -26,6 +27,7 @@ import type {
 
 export type AppDatabase = DrizzleD1Database<typeof schema>;
 export type MessageRole = (typeof messages.$inferInsert)["role"];
+type ConversationWithOfficeId = Conversation & { office_id: string };
 
 export interface UserApiKeyMeta {
   provider: string;
@@ -124,12 +126,17 @@ async function ensureOfficeForUser(
   return office;
 }
 
-function resolveProjectOfficeId(
-  _db: AppDatabase,
+async function resolveProjectOfficeId(
+  db: AppDatabase,
   project: Project,
-  _userId: string
-): Promise<string | null> {
-  return Promise.resolve(project.office_id ?? null);
+  userId: string
+): Promise<string> {
+  if (project.office_id) {
+    return project.office_id;
+  }
+
+  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
+  return fallbackOffice.id;
 }
 
 // ── User API Keys ──
@@ -621,6 +628,82 @@ async function getWorkspaceOrNull(
 
 // ── Conversations ──
 
+function normalizeExecutionTarget<
+  T extends { execution_target: ConversationStoredExecutionTarget },
+>(
+  row: T
+): Omit<T, "execution_target"> & {
+  execution_target: ConversationExecutionTarget;
+} {
+  if (row.execution_target === "default") {
+    return { ...row, execution_target: "sandbox" };
+  }
+  return {
+    ...row,
+    execution_target: "sandbox",
+  };
+}
+
+async function ensureConversationOfficeId(
+  db: AppDatabase,
+  userId: string,
+  conversationId: string,
+  officeId: string | null
+): Promise<string> {
+  if (officeId) {
+    return officeId;
+  }
+
+  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
+  await db
+    .update(conversations)
+    .set({
+      office_id: fallbackOffice.id,
+      updated_at: sql`datetime('now')`,
+    })
+    .where(
+      and(
+        eq(conversations.id, conversationId),
+        eq(conversations.user_id, userId),
+        isNull(conversations.office_id)
+      )
+    );
+  return fallbackOffice.id;
+}
+
+async function normalizeConversationOffices(
+  db: AppDatabase,
+  userId: string,
+  rows: Conversation[]
+): Promise<ConversationWithOfficeId[]> {
+  const orphanConversationIds = rows
+    .filter((row) => !row.office_id)
+    .map((row) => row.id);
+  if (orphanConversationIds.length === 0) {
+    return rows as ConversationWithOfficeId[];
+  }
+
+  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
+  await db
+    .update(conversations)
+    .set({
+      office_id: fallbackOffice.id,
+      updated_at: sql`datetime('now')`,
+    })
+    .where(
+      and(
+        eq(conversations.user_id, userId),
+        isNull(conversations.office_id),
+        inArray(conversations.id, orphanConversationIds)
+      )
+    );
+
+  return rows.map((row) => ({
+    ...row,
+    office_id: row.office_id ?? fallbackOffice.id,
+  }));
+}
+
 export async function createConversation(
   db: AppDatabase,
   id: string,
@@ -629,10 +712,10 @@ export async function createConversation(
   executionTarget: ConversationExecutionTarget,
   workspaceId?: string | null,
   officeId?: string
-): Promise<Conversation> {
+): Promise<ConversationWithOfficeId> {
   let resolvedExecutionTarget = executionTarget;
   let resolvedWorkspaceId: string | null = null;
-  let resolvedOfficeId: string | null = null;
+  let resolvedOfficeId: string;
 
   if (workspaceId) {
     const workspace = await getWorkspaceOrNull(db, workspaceId, userId);
@@ -653,9 +736,7 @@ export async function createConversation(
     resolvedOfficeId = projectOfficeId;
     resolvedExecutionTarget = "sandbox";
   } else {
-    resolvedOfficeId = officeId
-      ? (await ensureOfficeForUser(db, userId, officeId)).id
-      : null;
+    resolvedOfficeId = (await ensureOfficeForUser(db, userId, officeId)).id;
   }
 
   const row = await db
@@ -676,7 +757,10 @@ export async function createConversation(
       message: "Failed to create conversation",
     });
   }
-  return row;
+  return {
+    ...normalizeExecutionTarget(row),
+    office_id: resolvedOfficeId,
+  };
 }
 
 export async function listConversations(
@@ -687,7 +771,7 @@ export async function listConversations(
   executionTarget?: ConversationExecutionTarget,
   workspaceId?: string,
   officeId?: string
-): Promise<Conversation[]> {
+): Promise<ConversationWithOfficeId[]> {
   if (officeId) {
     await ensureOfficeForUser(db, userId, officeId);
   }
@@ -703,20 +787,23 @@ export async function listConversations(
     conditions.push(eq(conversations.office_id, officeId));
   }
 
-  return await db
+  const rows = await db
     .select()
     .from(conversations)
     .where(and(...conditions))
     .orderBy(desc(conversations.updated_at))
     .limit(limit)
     .offset(offset);
+
+  const normalizedRows = rows.map((row) => normalizeExecutionTarget(row));
+  return await normalizeConversationOffices(db, userId, normalizedRows);
 }
 
 export async function getConversation(
   db: AppDatabase,
   id: string,
   userId: string
-): Promise<Conversation> {
+): Promise<ConversationWithOfficeId> {
   const row = await db
     .select()
     .from(conversations)
@@ -726,7 +813,17 @@ export async function getConversation(
   if (!row) {
     notFound("Conversation");
   }
-  return row;
+  const normalizedRow = normalizeExecutionTarget(row);
+  const resolvedOfficeId = await ensureConversationOfficeId(
+    db,
+    userId,
+    normalizedRow.id,
+    normalizedRow.office_id
+  );
+  return {
+    ...normalizedRow,
+    office_id: resolvedOfficeId,
+  };
 }
 
 export async function updateConversationTitle(
@@ -851,12 +948,25 @@ export async function setConversationWorkspace(
     const project = await getProject(db, workspace.project_id, userId);
     nextOfficeId = await resolveProjectOfficeId(db, project, userId);
     nextExecutionTarget = "sandbox";
+  } else {
+    const existingConversation = await db
+      .select({ office_id: conversations.office_id })
+      .from(conversations)
+      .where(and(eq(conversations.id, id), eq(conversations.user_id, userId)))
+      .get();
+    if (!existingConversation) {
+      notFound("Conversation");
+    }
+    if (!existingConversation.office_id) {
+      nextOfficeId = (await getOrCreatePersonalOffice(db, userId)).id;
+    }
   }
 
   const updateValues =
     nextExecutionTarget === null
       ? {
           workspace_id: workspaceId,
+          ...(nextOfficeId ? { office_id: nextOfficeId } : {}),
           updated_at: sql`datetime('now')`,
         }
       : {
@@ -923,7 +1033,7 @@ export async function getConversationAgentId(
 export interface ConversationRuntime {
   letta_agent_id: string | null;
   execution_target: ConversationExecutionTarget;
-  office_id: string | null;
+  office_id: string;
 }
 
 export async function getConversationRuntime(
@@ -933,6 +1043,7 @@ export async function getConversationRuntime(
 ): Promise<ConversationRuntime> {
   const row = await db
     .select({
+      id: conversations.id,
       letta_agent_id: conversations.letta_agent_id,
       execution_target: conversations.execution_target,
       office_id: conversations.office_id,
@@ -944,7 +1055,18 @@ export async function getConversationRuntime(
   if (!row) {
     notFound("Conversation");
   }
-  return row;
+  const normalizedRow = normalizeExecutionTarget(row);
+  const resolvedOfficeId = await ensureConversationOfficeId(
+    db,
+    userId,
+    normalizedRow.id,
+    normalizedRow.office_id
+  );
+  return {
+    letta_agent_id: normalizedRow.letta_agent_id,
+    execution_target: normalizedRow.execution_target,
+    office_id: resolvedOfficeId,
+  };
 }
 
 // ── Messages ──

@@ -1,3 +1,4 @@
+import { safeValidateUIMessages, type UIMessage } from "ai";
 import { drizzle } from "drizzle-orm/d1";
 import { getMigrations } from "better-auth/db";
 import { Hono } from "hono";
@@ -7,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { authorizeTool, checkAuthStatus, listTools } from "./arcade";
 import { createAuth } from "./auth";
+import { isChatSkillId } from "./chat-skills";
 import { streamChat } from "./chat";
 import { encryptApiKey } from "./crypto";
 import {
@@ -68,6 +70,9 @@ import {
   validateAgentId,
   validateApiKeyInput,
   validateBranchName,
+  validateChatMessageCount,
+  validateChatSkillIds,
+  validateChatTrigger,
   validateContent,
   validateMcpAuthType,
   validateMcpName,
@@ -84,6 +89,7 @@ import {
   validateRepoName,
   validateRole,
   validateNullableUuid,
+  validateOptionalContent,
   validateWorkspaceKind,
   validateWorkspaceName,
   validateWorkspaceStatus,
@@ -732,7 +738,7 @@ app.post(
     const title =
       body.title !== undefined ? validateTitle(body.title) : "New Conversation";
     const executionTarget = validateExecutionTarget(
-      body.execution_target ?? "default"
+      body.execution_target ?? "sandbox"
     );
     const workspaceId =
       body.workspace_id === undefined
@@ -920,22 +926,56 @@ app.post(
     const userId = getUserId(c);
     const conversationId = validateUuid(c.req.param("id"));
     const body = await parseJsonBody(c);
-    const content = validateContent(body.content);
-    const conversation = await getConversation(appDb, conversationId, userId);
-    const officeId = await resolveOptionalOfficeId(
-      appDb,
-      userId,
-      conversation.office_id
+    const content = validateOptionalContent(body.content);
+    const trigger = validateChatTrigger(body.trigger);
+    const requestedSkillIds = validateChatSkillIds(body.skill_ids);
+    const skillIds = requestedSkillIds.filter(isChatSkillId);
+    const unknownSkillIds = requestedSkillIds.filter(
+      (id) => !isChatSkillId(id)
     );
-    const lettaApiKey = officeId
-      ? await resolveOfficeApiKey(
-          appDb,
-          c.env.BETTER_AUTH_SECRET,
-          officeId,
-          userId,
-          "letta"
-        )
-      : c.env.LETTA_API_KEY;
+    if (unknownSkillIds.length > 0) {
+      throw new HTTPException(400, {
+        message: `Unknown skill_ids: ${unknownSkillIds.join(", ")}`,
+      });
+    }
+
+    let messages: UIMessage[] | undefined;
+
+    if (body.messages !== undefined) {
+      const parsed = await safeValidateUIMessages({ messages: body.messages });
+      if (!parsed.success) {
+        throw new HTTPException(400, {
+          message: `Invalid messages payload: ${parsed.error.message}`,
+        });
+      }
+      validateChatMessageCount(parsed.data.length);
+      messages = parsed.data;
+    }
+
+    if (!(messages || content)) {
+      throw new HTTPException(400, {
+        message: "Provide either messages or content",
+      });
+    }
+
+    const conversation = await getConversation(appDb, conversationId, userId);
+    const officeId = conversation.office_id;
+    let lettaApiKey: string | undefined;
+    try {
+      lettaApiKey = await resolveOfficeApiKey(
+        appDb,
+        c.env.BETTER_AUTH_SECRET,
+        officeId,
+        userId,
+        "letta"
+      );
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 422) {
+        lettaApiKey = c.env.LETTA_API_KEY;
+      } else {
+        throw error;
+      }
+    }
     if (!lettaApiKey) {
       throw new HTTPException(422, {
         message: "Letta API key not configured. Add your key in Settings.",
@@ -946,7 +986,13 @@ app.post(
       lettaApiKey,
       conversationId,
       userId,
-      content,
+      officeId,
+      {
+        content,
+        messages,
+        trigger,
+        skillIds,
+      },
       c.executionCtx,
       c.env
     );

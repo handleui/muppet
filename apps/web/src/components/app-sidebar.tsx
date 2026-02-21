@@ -3,17 +3,25 @@
 import { useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Activity,
-  ChatBubble,
-  CodeBrackets,
   Database,
+  FolderPlus,
+  GitPullRequest,
+  Internet,
+  MessageText,
   NavArrowDown,
-  NavArrowLeft,
+  OpenBook,
   Plus,
-  Puzzle,
-  UserCircle,
+  Repeat,
+  SidebarCollapse,
+  SidebarExpand,
 } from "iconoir-react";
-import type { Conversation, Project, Workspace } from "@nosis/lib/worker-api";
+import { Avatar, AvatarFallback, AvatarImage, Facehash } from "facehash";
+import type { Conversation } from "@nosis/features/chat/api/worker-chat-api";
+import type {
+  Project,
+  Workspace,
+} from "@nosis/features/code/api/worker-code-api";
+import { authClient } from "@nosis/lib/auth-client";
 
 type SidebarNavItem = "habits" | "integrations" | "chat" | "code";
 
@@ -49,15 +57,19 @@ interface ConversationGroup {
   rows: Conversation[];
 }
 
+const FACEHASH_COLORS = [
+  "#5a4de6",
+  "#2b7fff",
+  "#0f9d8a",
+  "#f3a33c",
+  "#ef5a5a",
+] as const;
+
 function deriveRouteMode(pathname: string): "chat" | "code" {
   if (pathname.startsWith("/code")) {
     return "code";
   }
-  if (
-    pathname === "/" ||
-    pathname.startsWith("/chat") ||
-    pathname.startsWith("/chats")
-  ) {
+  if (pathname === "/" || pathname.startsWith("/chat")) {
     return "chat";
   }
   return "code";
@@ -89,24 +101,89 @@ function getConversationStats(
   };
 }
 
-function WorkspaceHeader({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+function FacehashSquare({ seed }: { seed: string }) {
   return (
-    <div className="flex h-10 items-center justify-between px-4">
+    <div className="size-5 overflow-hidden rounded-[4px]">
+      <Facehash
+        colors={[...FACEHASH_COLORS]}
+        intensity3d="subtle"
+        interactive={false}
+        name={seed}
+        showInitial={false}
+        size={20}
+        variant="solid"
+      />
+    </div>
+  );
+}
+
+function UserAvatarSquare({
+  imageUrl,
+  seed,
+}: {
+  imageUrl: string | null;
+  seed: string;
+}) {
+  return (
+    <Avatar
+      className="size-5 overflow-hidden rounded-[4px]"
+      style={{ width: 20, height: 20 }}
+    >
+      <AvatarImage alt="User avatar" src={imageUrl} />
+      <AvatarFallback
+        facehash
+        facehashProps={{
+          colors: [...FACEHASH_COLORS],
+          intensity3d: "subtle",
+          interactive: false,
+          showInitial: false,
+          variant: "solid",
+        }}
+        name={seed}
+      />
+    </Avatar>
+  );
+}
+
+function WorkspaceHeader({
+  onToggleSidebar,
+  officeSeed,
+  isCollapsed,
+}: {
+  onToggleSidebar: () => void;
+  officeSeed: string;
+  isCollapsed: boolean;
+}) {
+  return (
+    <div
+      className={`flex h-10 items-center justify-between ${
+        isCollapsed ? "px-2" : "px-4"
+      }`}
+    >
       <div className="flex items-center gap-2.5">
-        <Database className="size-4 text-[#808080]" />
+        <FacehashSquare seed={officeSeed} />
+        {isCollapsed ? null : (
+          <>
+            <p className="text-[13px] text-black tracking-[-0.39px]">
+              Workspace
+            </p>
 
-        <p className="text-[13px] text-black tracking-[-0.39px]">Workspace</p>
-
-        <NavArrowDown className="size-3 text-[#808080]" />
+            <NavArrowDown className="size-3 text-[#808080]" />
+          </>
+        )}
       </div>
 
       <button
         aria-label="Toggle sidebar"
-        className="flex size-3 items-center justify-center"
+        className="flex size-4 items-center justify-center"
         onClick={onToggleSidebar}
         type="button"
       >
-        <NavArrowLeft className="size-3 text-[#808080]" />
+        {isCollapsed ? (
+          <SidebarExpand className="size-4 text-[#808080]" />
+        ) : (
+          <SidebarCollapse className="size-4 text-[#808080]" />
+        )}
       </button>
     </div>
   );
@@ -120,15 +197,15 @@ function SidebarIcon({
   className: string;
 }) {
   if (item === "chat") {
-    return <ChatBubble className={className} />;
+    return <MessageText className={className} />;
   }
   if (item === "code") {
-    return <CodeBrackets className={className} />;
+    return <GitPullRequest className={className} />;
   }
   if (item === "integrations") {
-    return <Puzzle className={className} />;
+    return <Internet className={className} />;
   }
-  return <Activity className={className} />;
+  return <Repeat className={className} />;
 }
 
 function SidebarButton({
@@ -136,26 +213,44 @@ function SidebarButton({
   label,
   selected,
   onClick,
+  collapsed = false,
 }: {
   item: SidebarNavItem;
   label: string;
   selected: boolean;
   onClick?: () => void;
+  collapsed?: boolean;
 }) {
   const toneClass = selected ? "text-[#0080ff]" : "text-black";
+  const iconSizeClass = item === "habits" ? "size-[18px]" : "size-4";
+  const buttonClass = collapsed
+    ? `flex size-8 items-center justify-center rounded-[6px] ${
+        selected ? "bg-[#f6fbff]" : "hover:bg-[#f7f7f7]"
+      }`
+    : `flex h-8 w-full items-center gap-3 rounded-[4px] px-2 text-left ${
+        selected ? "bg-[#f6fbff]" : "hover:bg-[#f7f7f7]"
+      }`;
 
   return (
-    <div className="w-full px-2 py-1">
+    <div
+      className={collapsed ? "flex justify-center py-1" : "w-full px-2 py-1"}
+    >
       <button
-        className={`flex h-8 w-full items-center gap-3 rounded-[4px] px-2 text-left ${
-          selected ? "bg-[#f6fbff]" : "hover:bg-[#f7f7f7]"
-        }`}
+        aria-label={label}
+        className={buttonClass}
         onClick={onClick}
+        title={label}
         type="button"
       >
-        <SidebarIcon className={`size-4 shrink-0 ${toneClass}`} item={item} />
-
-        <p className={`text-[13px] tracking-[-0.39px] ${toneClass}`}>{label}</p>
+        <SidebarIcon
+          className={`${iconSizeClass} shrink-0 ${toneClass}`}
+          item={item}
+        />
+        {collapsed ? null : (
+          <p className={`text-[13px] tracking-[-0.39px] ${toneClass}`}>
+            {label}
+          </p>
+        )}
       </button>
     </div>
   );
@@ -166,23 +261,33 @@ function SectionHeader({
   muted = false,
   showIcon = true,
   onCreate,
+  onSelect,
 }: {
   label: string;
   muted?: boolean;
   showIcon?: boolean;
   onCreate?: () => void;
+  onSelect?: () => void;
 }) {
+  const textClass = `text-xs tracking-[-0.36px] ${
+    muted ? "text-[#808080]" : "text-black"
+  }`;
+
   return (
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-2.5">
         {showIcon ? <Database className="size-3.5 text-[#808080]" /> : null}
-        <p
-          className={`text-xs tracking-[-0.36px] ${
-            muted ? "text-[#808080]" : "text-black"
-          }`}
-        >
-          {label}
-        </p>
+        {onSelect ? (
+          <button
+            className={`${textClass} bg-transparent text-left hover:text-black`}
+            onClick={onSelect}
+            type="button"
+          >
+            {label}
+          </button>
+        ) : (
+          <p className={textClass}>{label}</p>
+        )}
       </div>
 
       {onCreate ? (
@@ -244,6 +349,7 @@ export default function AppSidebar({
   allWorkspaces,
   selectedProjectId,
   activeConversationId,
+  isSidebarOpen,
   isLoading,
   isProjectsLoading,
   error,
@@ -253,26 +359,55 @@ export default function AppSidebar({
 }: AppSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const { data: session } = authClient.useSession();
   const activeMode = useMemo(() => deriveRouteMode(pathname), [pathname]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId]
+  );
+
+  const officeSeed = useMemo(
+    () => selectedProject?.owner ?? projects[0]?.owner ?? "nosis",
+    [projects, selectedProject?.owner]
+  );
+
+  const userSeed = useMemo(
+    () => session?.user?.email ?? session?.user?.name ?? "nosis-user",
+    [session?.user?.email, session?.user?.name]
+  );
+  const userImage = useMemo(() => {
+    const user = session?.user;
+    if (!user) {
+      return null;
+    }
+
+    if (typeof user.image === "string" && user.image.trim().length > 0) {
+      return user.image;
+    }
+
+    const withAvatarUrl = user as Record<string, unknown>;
+    const avatarUrl = withAvatarUrl.avatar_url;
+    if (typeof avatarUrl === "string" && avatarUrl.trim().length > 0) {
+      return avatarUrl;
+    }
+
+    return null;
+  }, [session?.user]);
 
   const workspaceById = useMemo(
     () => new Map(allWorkspaces.map((workspace) => [workspace.id, workspace])),
     [allWorkspaces]
   );
 
-  const codeConversations = useMemo(
-    () =>
-      conversations.filter(
-        (conversation) => conversation.execution_target === "sandbox"
-      ),
+  // Code threads are attached to a workspace; chat threads are not.
+  const codeThreads = useMemo(
+    () => conversations.filter((conversation) => conversation.workspace_id),
     [conversations]
   );
 
-  const chatConversations = useMemo(
-    () =>
-      conversations.filter(
-        (conversation) => conversation.execution_target === "default"
-      ),
+  const chatThreads = useMemo(
+    () => conversations.filter((conversation) => !conversation.workspace_id),
     [conversations]
   );
 
@@ -284,7 +419,7 @@ export default function AppSidebar({
       groupedByProjectId.set(project.id, []);
     }
 
-    for (const conversation of codeConversations) {
+    for (const conversation of codeThreads) {
       if (!conversation.workspace_id) {
         unassigned.push(conversation);
         continue;
@@ -323,13 +458,95 @@ export default function AppSidebar({
     }
 
     return projectGroups;
-  }, [codeConversations, isProjectsLoading, projects, workspaceById]);
+  }, [codeThreads, isProjectsLoading, projects, workspaceById]);
+
+  const isCollapsed = !isSidebarOpen;
+
+  if (isCollapsed) {
+    return (
+      <div className="flex size-full flex-col justify-between bg-white">
+        <div className="border-[#f0f0f0] border-b pt-1 pb-2">
+          <WorkspaceHeader
+            isCollapsed
+            officeSeed={officeSeed}
+            onToggleSidebar={onToggleSidebar}
+          />
+
+          <div className="mt-1 flex flex-col items-center">
+            <SidebarButton
+              collapsed
+              item="habits"
+              label="Habits"
+              selected={false}
+            />
+            <SidebarButton
+              collapsed
+              item="integrations"
+              label="Integrations"
+              selected={false}
+            />
+            <SidebarButton
+              collapsed
+              item="chat"
+              label="Chat"
+              onClick={() => {
+                if (pathname !== "/" && !pathname.startsWith("/chat")) {
+                  router.push("/");
+                }
+              }}
+              selected={activeMode === "chat"}
+            />
+            <SidebarButton
+              collapsed
+              item="code"
+              label="Code"
+              onClick={() => {
+                if (!pathname.startsWith("/code")) {
+                  router.push("/code");
+                }
+              }}
+              selected={activeMode === "code"}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center gap-3 border-[#f1f1f2] border-t py-3">
+          <button
+            aria-label="Add Project"
+            className="flex size-8 items-center justify-center rounded-[6px] hover:bg-[#f7f7f7]"
+            onClick={() => router.push("/code/new")}
+            title="Add Project"
+            type="button"
+          >
+            <FolderPlus className="size-4 text-black" />
+          </button>
+
+          <a
+            aria-label="Open docs"
+            className="flex size-8 items-center justify-center rounded-[6px] hover:bg-[#f7f7f7]"
+            href="https://nosis.sh/docs"
+            rel="noopener"
+            target="_blank"
+            title="Docs"
+          >
+            <OpenBook className="size-4 text-[#808080]" />
+          </a>
+
+          <UserAvatarSquare imageUrl={userImage} seed={userSeed} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex size-full flex-col justify-between bg-white">
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="border-[#f0f0f0] border-b pt-1 pb-2">
-          <WorkspaceHeader onToggleSidebar={onToggleSidebar} />
+          <WorkspaceHeader
+            isCollapsed={false}
+            officeSeed={officeSeed}
+            onToggleSidebar={onToggleSidebar}
+          />
 
           <SidebarButton item="habits" label="Habits" selected={false} />
           <SidebarButton
@@ -368,6 +585,11 @@ export default function AppSidebar({
                     label={group.label}
                     muted={selectedProjectId !== group.projectId}
                     onCreate={() => onCreateConversation("code")}
+                    onSelect={
+                      group.projectId
+                        ? () => router.push(`/code/${group.projectId}`)
+                        : undefined
+                    }
                   />
 
                   {group.rows.map((conversation) => (
@@ -416,7 +638,7 @@ export default function AppSidebar({
                 showIcon={false}
               />
 
-              {chatConversations.map((conversation) => (
+              {chatThreads.map((conversation) => (
                 <ConversationRow
                   conversation={conversation}
                   isActive={conversation.id === activeConversationId}
@@ -432,7 +654,7 @@ export default function AppSidebar({
                 />
               ))}
 
-              {!isLoading && chatConversations.length === 0 ? (
+              {!isLoading && chatThreads.length === 0 ? (
                 <p className="px-4 py-3 text-[#808080] text-sm tracking-[-0.42px]">
                   No chat threads yet
                 </p>
@@ -460,21 +682,22 @@ export default function AppSidebar({
           onClick={() => router.push("/code/new")}
           type="button"
         >
-          <Plus className="size-4 text-black" />
+          <FolderPlus className="size-4 text-black" />
           <p className="text-black text-xs tracking-[-0.36px]">Add Project</p>
         </button>
 
         <div className="flex items-center gap-4">
-          <button
-            aria-label="Toggle sidebar"
+          <a
+            aria-label="Open docs"
             className="flex size-4 items-center justify-center"
-            onClick={onToggleSidebar}
-            type="button"
+            href="https://nosis.sh/docs"
+            rel="noopener"
+            target="_blank"
           >
-            <NavArrowLeft className="size-4 text-[#808080]" />
-          </button>
+            <OpenBook className="size-4 text-[#808080]" />
+          </a>
 
-          <UserCircle className="size-5 text-[#808080]" />
+          <UserAvatarSquare imageUrl={userImage} seed={userSeed} />
         </div>
       </div>
     </div>

@@ -169,11 +169,40 @@ All requests use cookie credentials and centralized `ApiError` mapping.
 
 ### MCP Scope Behavior
 
-Execution target to MCP scopes:
+Execution target to MCP scopes is currently sandbox-only:
 
 - `sandbox` -> `global`, `sandbox`
-- `desktop` -> `global`, `desktop`
-- `default` -> `global`
+
+### Execution Surfaces
+
+Shared target taxonomy is defined in `@nosis/agent-runtime`:
+
+- cloud/worker: `sandbox` (legacy stored `default` is normalized to `sandbox`)
+- desktop (planned runtime): `sandbox`, `local`
+
+Current guardrails:
+
+- Worker chat validation remains sandbox-only.
+- Web conversation hooks default to sandbox filtering.
+- Local desktop execution remains out-of-scope for this PR.
+
+### Responsibility Split (Worker vs Web vs Shared)
+
+Target weighting for chat/runtime ownership:
+
+- Worker (`~80% runtime authority`)
+  - execution-target validation and canonicalization on write/read
+  - agent lifecycle (resolve/create/claim) and streaming orchestration
+  - office ownership enforcement and persistence guarantees
+  - tool loading policy and secrets/key resolution
+- Web (`~20% client authority`)
+  - route/view semantics (`chat` vs `code` thread UX)
+  - request shaping and optimistic state updates
+  - default filtering to sandbox-only conversation scope
+- Shared package (`@nosis/agent-runtime`)
+  - cross-surface execution taxonomy/types/constants
+  - reusable runtime primitives that are environment-agnostic
+  - no direct ownership of storage/auth/tool secrets
 
 ## Data Model (D1 + Drizzle)
 
@@ -195,7 +224,7 @@ Web UI (`github-controls-panel` + `use-github-controls`) calls Worker GitHub end
 Runtime abstraction in `git-workspace-runtime.ts` supports:
 
 - remote branch/PR flows for web/cloud workspaces
-- optional desktop command bridge (Tauri invoke) for commit/push when desktop runtime is available
+- local commit/push is intentionally not available in the web runtime
 
 ## Build and Dev
 

@@ -9,7 +9,7 @@ import {
   type GithubPullRequest,
   type GithubPullRequestDetailResponse,
   type GithubRepo,
-} from "@nosis/lib/worker-api";
+} from "@nosis/features/github/api/worker-github-api";
 
 const BRANCH_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
 const DASH_REPEAT_RE = /-+/g;

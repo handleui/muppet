@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import ChatInput from "@nosis/components/chat-input";
 import ChatMessages from "@nosis/components/chat-messages";
-import { useNosisChat } from "@nosis/hooks/use-nosis-chat";
+import { useNosisChat } from "@nosis/features/chat/hooks/use-nosis-chat";
 
 function clearSeedQuery(): void {
   if (typeof window === "undefined") {

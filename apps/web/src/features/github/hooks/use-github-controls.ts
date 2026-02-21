@@ -6,18 +6,20 @@ import {
   fetchPullRequestDetail,
   fetchPullRequests,
   parseGithubRepoUrl,
-} from "@nosis/lib/git-ops";
+} from "@nosis/features/github/lib/git-ops";
 import {
   createGitWorkspaceRuntime,
   getGitWorkspaceErrorMessage,
-} from "@nosis/lib/git-workspace-runtime";
+} from "@nosis/features/github/lib/git-workspace-runtime";
+import type {
+  Project,
+  Workspace,
+} from "@nosis/features/code/api/worker-code-api";
 import type {
   GithubBranch,
   GithubPullRequest,
   GithubPullRequestDetailResponse,
-  Project,
-  Workspace,
-} from "@nosis/lib/worker-api";
+} from "@nosis/features/github/api/worker-github-api";
 
 interface UseGithubControlsParams {
   project: Project | null;

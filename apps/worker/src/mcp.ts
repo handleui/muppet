@@ -19,14 +19,9 @@ export interface McpToolsResult {
 }
 
 function scopesForExecutionTarget(
-  executionTarget: ConversationExecutionTarget
+  _executionTarget: ConversationExecutionTarget
 ): readonly McpServerScope[] {
-  switch (executionTarget) {
-    case "sandbox":
-      return ["global", "sandbox"];
-    default:
-      return ["global"];
-  }
+  return ["global", "sandbox"];
 }
 
 /** Batch-fetch all encrypted API keys for the given MCP server IDs in one query. */
@@ -64,13 +59,13 @@ async function fetchServerKeys(
 
 async function connectUserServer(
   env: Bindings,
-  officeId: string | null,
+  officeId: string,
   server: McpServer,
   encryptedKey: string | undefined
 ): Promise<MCPClient> {
   const headers: Record<string, string> = {};
 
-  if (server.auth_type === "api_key" && encryptedKey && officeId) {
+  if (server.auth_type === "api_key" && encryptedKey) {
     const apiKey = await decryptApiKey(
       env.BETTER_AUTH_SECRET,
       officeId,
@@ -92,7 +87,7 @@ export async function getActiveTools(
   db: AppDatabase,
   env: Bindings,
   userId: string,
-  officeId: string | null,
+  officeId: string,
   executionTarget: ConversationExecutionTarget
 ): Promise<McpToolsResult> {
   const clients: MCPClient[] = [];
@@ -101,12 +96,10 @@ export async function getActiveTools(
   // Fetch user servers + batch-load their API keys (1 query instead of N)
   const scopes = scopesForExecutionTarget(executionTarget);
   const servers = await listMcpServers(db, userId, scopes);
-  const authServerIds = officeId
-    ? servers.filter((s) => s.auth_type === "api_key").map((s) => s.id)
-    : [];
-  const keyMap = officeId
-    ? await fetchServerKeys(db, officeId, authServerIds)
-    : new Map<string, string>();
+  const authServerIds = servers
+    .filter((s) => s.auth_type === "api_key")
+    .map((s) => s.id);
+  const keyMap = await fetchServerKeys(db, officeId, authServerIds);
 
   // Connect to Arcade and all user servers in parallel
   const connectionTasks: Promise<{ client: MCPClient; tools: ToolSet }>[] = [];
@@ -128,7 +121,7 @@ export async function getActiveTools(
 
   for (const server of servers) {
     const encryptedKey = keyMap.get(server.id);
-    if (server.auth_type === "api_key" && !(officeId && encryptedKey)) {
+    if (server.auth_type === "api_key" && !encryptedKey) {
       continue;
     }
     connectionTasks.push(

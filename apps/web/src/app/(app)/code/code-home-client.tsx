@@ -52,7 +52,9 @@ export default function CodeHomeClient() {
     setIsCreating(false);
 
     if (conversation) {
-      router.push(`/code/${conversation.id}?q=${encodeURIComponent(trimmed)}`);
+      router.push(
+        `/code/chat/${conversation.id}?q=${encodeURIComponent(trimmed)}`
+      );
     }
   };
 

@@ -42,7 +42,6 @@ const CONSTRAINTS = {
 } as const;
 
 const COLLAPSE_THRESHOLD = 200;
-const EDGE_HITBOX_WIDTH = 64;
 const DRAG_HANDLE_WIDTH = 4;
 const DRAG_HANDLE_OFFSET = DRAG_HANDLE_WIDTH / 2;
 
@@ -145,40 +144,6 @@ const SidebarPanel = ({ side, width, children }: SidebarPanelProps) => {
         {children}
       </div>
     </aside>
-  );
-};
-
-interface EdgeHitboxProps {
-  side: "left" | "right";
-  enabled: boolean;
-  isActive: boolean;
-  onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
-}
-
-const EdgeHitbox = ({
-  side,
-  enabled,
-  isActive,
-  onPointerDown,
-}: EdgeHitboxProps) => {
-  const isLeft = side === "left";
-  return (
-    <div
-      onPointerDown={onPointerDown}
-      style={{
-        position: "absolute",
-        top: 0,
-        [isLeft ? "left" : "right"]: 0,
-        width: `${EDGE_HITBOX_WIDTH}px`,
-        height: "100%",
-        zIndex: 30,
-        cursor: enabled ? "grab" : "default",
-        pointerEvents:
-          enabled && isActive ? ("auto" as const) : ("none" as const),
-        userSelect: "none",
-        touchAction: "none",
-      }}
-    />
   );
 };
 
@@ -421,7 +386,6 @@ interface ResizeControlsProps {
   allowLeftResize: boolean;
   allowRightResize: boolean;
   activeHandle: "left" | "right" | null;
-  hitboxActive: { left: boolean; right: boolean };
   leftWidth: number;
   rightWidth: number;
   startDrag: (side: "left" | "right", e: PointerEvent<HTMLDivElement>) => void;
@@ -433,7 +397,6 @@ const ResizeControls = ({
   allowLeftResize,
   allowRightResize,
   activeHandle,
-  hitboxActive,
   leftWidth,
   rightWidth,
   startDrag,
@@ -482,19 +445,6 @@ const ResizeControls = ({
         onPointerEnter={() => handlePointerEnter("right", allowRightResize)}
         onPointerLeave={() => !activeHandle && setHoveredHandle(null)}
         position={rightWidth}
-        side="right"
-      />
-
-      <EdgeHitbox
-        enabled={allowLeftResize}
-        isActive={allowLeftResize && hitboxActive.left}
-        onPointerDown={(e) => handlePointerDown("left", allowLeftResize, e)}
-        side="left"
-      />
-      <EdgeHitbox
-        enabled={allowRightResize}
-        isActive={allowRightResize && hitboxActive.right}
-        onPointerDown={(e) => handlePointerDown("right", allowRightResize, e)}
         side="right"
       />
     </>
@@ -593,7 +543,6 @@ const ResizableGrid = ({
         allowLeftResize={allowLeftResize}
         allowRightResize={allowRightResize}
         allowUserResize={allowUserResize}
-        hitboxActive={hitboxActive}
         leftWidth={widthRef.current.left}
         rightWidth={widthRef.current.right}
         setHoveredHandle={setHoveredHandle}

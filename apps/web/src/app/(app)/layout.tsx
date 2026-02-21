@@ -12,8 +12,9 @@ import {
 import ResizableGrid from "@nosis/components/resizable-grid";
 import type { ResizableGridHandle } from "@nosis/components/resizable-grid";
 
-const LEFT_SIDEBAR_WIDTH = 325;
-const CODE_PATH_REGEX = /^\/code\/([0-9a-f-]+)$/i;
+const LEFT_SIDEBAR_EXPANDED_WIDTH = 325;
+const LEFT_SIDEBAR_COLLAPSED_WIDTH = 56;
+const CODE_PATH_REGEX = /^\/code\/chat\/([0-9a-f-]+)$/i;
 const CHAT_PATH_REGEX = /^\/chat\/([0-9a-f-]+)$/i;
 
 function AppShellLayoutContent({ children }: { children: ReactNode }) {
@@ -48,7 +49,10 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
   const handleCreateConversation = useCallback(
     (mode: "chat" | "code") => {
       if (mode === "chat") {
-        createNewConversation({ executionTarget: "default" })
+        createNewConversation({
+          executionTarget: "sandbox",
+          workspaceId: null,
+        })
           .then((conversation) => {
             router.push(`/chat/${conversation.id}`);
           })
@@ -57,17 +61,21 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
       }
 
       if (!selectedWorkspaceId) {
+        if (selectedProjectId) {
+          router.push(`/code/${selectedProjectId}`);
+          return;
+        }
         router.push("/code");
         return;
       }
 
       createNewConversation({ executionTarget: "sandbox" })
         .then((conversation) => {
-          router.push(`/code/${conversation.id}`);
+          router.push(`/code/chat/${conversation.id}`);
         })
         .catch(() => undefined);
     },
-    [createNewConversation, router, selectedWorkspaceId]
+    [createNewConversation, router, selectedProjectId, selectedWorkspaceId]
   );
 
   const handleToggleSidebar = useCallback(() => {
@@ -75,12 +83,17 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
     if (!grid) {
       return;
     }
-    const isCurrentlyOpen = grid.widths.left > 0;
-    if (isCurrentlyOpen) {
-      grid.setWidths(0, 0, 180);
+    const isExpanded =
+      grid.widths.left > LEFT_SIDEBAR_COLLAPSED_WIDTH + Number.EPSILON;
+
+    if (isExpanded) {
+      grid.setWidths(LEFT_SIDEBAR_COLLAPSED_WIDTH, 0, 180);
+      setIsSidebarOpen(false);
       return;
     }
-    grid.setWidths(LEFT_SIDEBAR_WIDTH, 0, 180);
+
+    grid.setWidths(LEFT_SIDEBAR_EXPANDED_WIDTH, 0, 180);
+    setIsSidebarOpen(true);
   }, []);
 
   const handleSelectConversation = useCallback(
@@ -95,7 +108,7 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
       router.push(
         input.mode === "chat"
           ? `/chat/${input.conversationId}`
-          : `/code/${input.conversationId}`
+          : `/code/chat/${input.conversationId}`
       );
     },
     [router, selectProject, selectWorkspace]
@@ -107,22 +120,13 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
     <div className="flex h-dvh overflow-hidden bg-white">
       <ResizableGrid
         allowRightResize={false}
-        allowUserResize
+        allowUserResize={false}
         center={
           <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            {isSidebarOpen ? null : (
-              <button
-                className="absolute top-3 left-3 z-20 rounded border border-subtle bg-white px-2 py-1 font-normal text-[#808080] text-xs hover:bg-[#f6f6f6]"
-                onClick={handleToggleSidebar}
-                type="button"
-              >
-                Show chats
-              </button>
-            )}
             {children}
           </div>
         }
-        initialLeft={LEFT_SIDEBAR_WIDTH}
+        initialLeft={LEFT_SIDEBAR_EXPANDED_WIDTH}
         initialRight={0}
         left={
           <AppSidebar
@@ -140,7 +144,6 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
             selectedProjectId={selectedProjectId}
           />
         }
-        onLeftCollapsedChange={(collapsed) => setIsSidebarOpen(!collapsed)}
         ref={gridRef}
         right={null}
       />

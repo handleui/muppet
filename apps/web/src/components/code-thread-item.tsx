@@ -1,6 +1,6 @@
 "use client";
 
-import type { Conversation } from "@nosis/lib/worker-api";
+import type { Conversation } from "@nosis/features/chat/api/worker-chat-api";
 
 interface CodeThreadItemProps {
   conversation: Conversation;

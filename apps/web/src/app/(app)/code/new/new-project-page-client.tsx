@@ -4,7 +4,10 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCodeWorkspace } from "@nosis/components/code-workspace-provider";
-import { listGithubRepos, type GithubRepo } from "@nosis/lib/worker-api";
+import {
+  listGithubRepos,
+  type GithubRepo,
+} from "@nosis/features/github/api/worker-github-api";
 import { Button } from "@nosis/ui/button";
 import { authClient } from "@nosis/lib/auth-client";
 import {
