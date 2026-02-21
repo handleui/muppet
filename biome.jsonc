@@ -19,6 +19,12 @@
           "performance": { "noImgElement": "off" }
         }
       }
+    },
+    {
+      // Drizzle meta/sql files are generated artifacts.
+      "includes": ["apps/worker/drizzle/**"],
+      "formatter": { "enabled": false },
+      "linter": { "enabled": false }
     }
   ]
 }

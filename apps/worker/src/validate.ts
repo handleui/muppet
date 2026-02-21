@@ -15,6 +15,25 @@ const MAX_AGENT_ID_LENGTH = 200;
 const MAX_TOKEN_COUNT = 10_000_000; // 10 M — well above any model's context window
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
+const VALID_EXECUTION_TARGETS: ReadonlySet<string> = new Set([
+  "default",
+  "sandbox",
+]);
+const VALID_WORKSPACE_KINDS: ReadonlySet<string> = new Set(["cloud"]);
+const VALID_WORKSPACE_STATUSES: ReadonlySet<string> = new Set([
+  "ready",
+  "provisioning",
+  "error",
+]);
+
+const MAX_REPO_URL_LENGTH = 500;
+const MAX_PROJECT_SEGMENT_LENGTH = 200;
+const MAX_OFFICE_NAME_LENGTH = 120;
+const MAX_WORKSPACE_NAME_LENGTH = 120;
+const MAX_BRANCH_NAME_LENGTH = 255;
+const MAX_PATH_LENGTH = 4000;
+const PROJECT_SEGMENT_RE = /^[a-zA-Z0-9._-]+$/;
+const REPO_DOT_GIT_SUFFIX_RE = /\.git$/i;
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -136,6 +155,165 @@ export function validateAgentId(value: unknown): string {
   return value;
 }
 
+export type ConversationExecutionTarget = "default" | "sandbox";
+export type WorkspaceKind = "cloud";
+export type WorkspaceStatus = "ready" | "provisioning" | "error";
+
+export function validateExecutionTarget(
+  value: unknown
+): ConversationExecutionTarget {
+  if (typeof value !== "string" || !VALID_EXECUTION_TARGETS.has(value)) {
+    badRequest("execution_target must be one of: default, sandbox");
+  }
+  return value as ConversationExecutionTarget;
+}
+
+function parseOwnerRepoPath(
+  path: string
+): { owner: string; repo: string } | null {
+  const trimmed = path.trim().replace(/^\/+|\/+$/g, "");
+  const parts = trimmed.split("/");
+  if (parts.length !== 2) {
+    return null;
+  }
+  const [ownerRaw, repoRaw] = parts;
+  const owner = ownerRaw.trim();
+  const repoWithoutSuffix = repoRaw.trim().replace(REPO_DOT_GIT_SUFFIX_RE, "");
+  if (owner.length === 0 || repoWithoutSuffix.length === 0) {
+    return null;
+  }
+  return { owner, repo: repoWithoutSuffix };
+}
+
+function validateProjectSegment(value: string, field: string): void {
+  if (
+    value.length === 0 ||
+    value.length > MAX_PROJECT_SEGMENT_LENGTH ||
+    !PROJECT_SEGMENT_RE.test(value)
+  ) {
+    badRequest(`${field} contains invalid characters in GitHub repository URL`);
+  }
+}
+
+export interface CanonicalGithubRepo {
+  repo_url: string;
+  owner: string;
+  repo: string;
+}
+
+export function canonicalizeGithubRepoUrl(value: unknown): CanonicalGithubRepo {
+  if (typeof value !== "string") {
+    badRequest("repo_url must be a string");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_REPO_URL_LENGTH) {
+    badRequest(`repo_url must be 1-${MAX_REPO_URL_LENGTH} characters`);
+  }
+
+  let ownerRepo: { owner: string; repo: string } | null = null;
+  const scpPrefix = "git@github.com:";
+  if (trimmed.toLowerCase().startsWith(scpPrefix)) {
+    ownerRepo = parseOwnerRepoPath(trimmed.slice(scpPrefix.length));
+  } else {
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      badRequest("repo_url must be a valid GitHub repository URL");
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "github.com") {
+      badRequest("repo_url must target github.com");
+    }
+    ownerRepo = parseOwnerRepoPath(parsed.pathname);
+  }
+
+  if (!ownerRepo) {
+    badRequest("repo_url must be a valid GitHub origin URL");
+  }
+
+  validateProjectSegment(ownerRepo.owner, "owner");
+  validateProjectSegment(ownerRepo.repo, "repo");
+
+  return {
+    repo_url: `https://github.com/${ownerRepo.owner}/${ownerRepo.repo}`,
+    owner: ownerRepo.owner,
+    repo: ownerRepo.repo,
+  };
+}
+
+export function validateWorkspaceKind(value: unknown): WorkspaceKind {
+  if (typeof value !== "string" || !VALID_WORKSPACE_KINDS.has(value)) {
+    badRequest("kind must be: cloud");
+  }
+  return value as WorkspaceKind;
+}
+
+export function validateWorkspaceStatus(value: unknown): WorkspaceStatus {
+  if (typeof value !== "string" || !VALID_WORKSPACE_STATUSES.has(value)) {
+    badRequest("status must be one of: ready, provisioning, error");
+  }
+  return value as WorkspaceStatus;
+}
+
+function validateBoundedString(
+  value: unknown,
+  field: string,
+  maxLength: number
+): string {
+  if (typeof value !== "string") {
+    badRequest(`${field} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) {
+    badRequest(`${field} must be 1-${maxLength} characters`);
+  }
+  return trimmed;
+}
+
+export function validateWorkspaceName(value: unknown): string {
+  return validateBoundedString(value, "name", MAX_WORKSPACE_NAME_LENGTH);
+}
+
+export function validateOfficeName(value: unknown): string {
+  return validateBoundedString(value, "name", MAX_OFFICE_NAME_LENGTH);
+}
+
+export function validateBranchName(value: unknown, field: string): string {
+  return validateBoundedString(value, field, MAX_BRANCH_NAME_LENGTH);
+}
+
+export function validateOptionalText(
+  value: unknown,
+  field: string,
+  maxLength: number
+): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return validateBoundedString(value, field, maxLength);
+}
+
+export function validateOptionalPath(
+  value: unknown,
+  field: string
+): string | null {
+  return validateOptionalText(value, field, MAX_PATH_LENGTH);
+}
+
+export function validateNullableUuid(
+  value: unknown,
+  field: string
+): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    badRequest(`${field} is required`);
+  }
+  return validateUuid(value, field);
+}
+
 export function validatePagination(
   limit: unknown,
   offset: unknown
@@ -181,6 +359,7 @@ const MCP_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 const MAX_MCP_NAME_LENGTH = 100;
 const MAX_MCP_URL_LENGTH = 2000;
 const VALID_MCP_AUTH_TYPES: ReadonlySet<string> = new Set(["none", "api_key"]);
+const VALID_MCP_SCOPES: ReadonlySet<string> = new Set(["global", "sandbox"]);
 
 // ── SSRF: Private / Reserved Network Detection ──
 
@@ -290,6 +469,7 @@ function isBlockedMcpHost(hostname: string): boolean {
 }
 
 export type McpAuthType = "none" | "api_key";
+export type McpScope = "global" | "sandbox";
 
 export function validateMcpName(value: unknown): string {
   if (typeof value !== "string") {
@@ -350,6 +530,13 @@ export function validateMcpAuthType(value: unknown): McpAuthType {
     badRequest("auth_type must be 'none' or 'api_key'");
   }
   return value as McpAuthType;
+}
+
+export function validateMcpScope(value: unknown): McpScope {
+  if (typeof value !== "string" || !VALID_MCP_SCOPES.has(value)) {
+    badRequest("scope must be one of: global, sandbox");
+  }
+  return value as McpScope;
 }
 
 // ── GitHub Params ──

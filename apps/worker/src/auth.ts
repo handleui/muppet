@@ -21,7 +21,7 @@ export function createAuth(env: Bindings) {
       github: {
         clientId: env.GITHUB_CLIENT_ID,
         clientSecret: env.GITHUB_CLIENT_SECRET,
-        scope: ["read:user", "user:email", "repo"],
+        scope: ["read:user", "user:email", "repo", "read:org"],
       },
     },
     session: {

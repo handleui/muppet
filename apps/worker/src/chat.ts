@@ -3,7 +3,7 @@ import { createAgent, createProvider } from "@nosis/provider";
 import { HTTPException } from "hono/http-exception";
 import {
   type AppDatabase,
-  getConversationAgentId,
+  getConversationRuntime,
   saveMessageBatch,
   trySetConversationAgentId,
 } from "./db";
@@ -46,11 +46,12 @@ async function resolveAgentId(
     })
   );
 
-  const winnerAgentId = await getConversationAgentId(
+  const winnerRuntime = await getConversationRuntime(
     db,
     conversationId,
     userId
   );
+  const winnerAgentId = winnerRuntime.letta_agent_id;
   if (!winnerAgentId) {
     throw new HTTPException(500, {
       message: "Failed to resolve agent for conversation",
@@ -68,19 +69,14 @@ export async function streamChat(
   ctx: ExecutionContext,
   env: Bindings
 ): Promise<Response> {
-  // Lightweight lookup — only fetches letta_agent_id, not the full conversation row
-  const existingAgentId = await getConversationAgentId(
-    db,
-    conversationId,
-    userId
-  );
+  const runtime = await getConversationRuntime(db, conversationId, userId);
   const provider = createProvider(lettaApiKey);
   const agentId = await resolveAgentId(
     provider,
     db,
     conversationId,
     userId,
-    existingAgentId,
+    runtime.letta_agent_id,
     ctx,
     lettaApiKey
   );
@@ -97,7 +93,13 @@ export async function streamChat(
       0,
       0
     ),
-    getActiveTools(db, env, userId),
+    getActiveTools(
+      db,
+      env,
+      userId,
+      runtime.office_id,
+      runtime.execution_target
+    ),
   ]);
   const hasTools = Object.keys(tools).length > 0;
 

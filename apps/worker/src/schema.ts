@@ -5,6 +5,7 @@ import {
   primaryKey,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 // ── Better Auth tables ──
@@ -78,6 +79,88 @@ export const verification = sqliteTable("verification", {
 
 // ── App tables ──
 
+export const offices = sqliteTable(
+  "offices",
+  {
+    id: text("id").primaryKey().notNull(),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_offices_user_updated").on(table.user_id, table.updated_at),
+    uniqueIndex("idx_offices_user_slug").on(table.user_id, table.slug),
+  ]
+);
+
+export const projects = sqliteTable(
+  "projects",
+  {
+    id: text("id").primaryKey().notNull(),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    office_id: text("office_id").references(() => offices.id, {
+      onDelete: "set null",
+    }),
+    repo_url: text("repo_url").notNull(),
+    owner: text("owner").notNull(),
+    repo: text("repo").notNull(),
+    default_branch: text("default_branch"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_projects_user_created").on(table.user_id, table.created_at),
+    index("idx_projects_user_office_created").on(
+      table.user_id,
+      table.office_id,
+      table.created_at
+    ),
+    uniqueIndex("idx_projects_user_office_repo_url").on(
+      table.user_id,
+      table.office_id,
+      table.repo_url
+    ),
+  ]
+);
+
+export const workspaces = sqliteTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey().notNull(),
+    user_id: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    project_id: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["cloud"] }).notNull(),
+    name: text("name").notNull(),
+    base_branch: text("base_branch").notNull(),
+    working_branch: text("working_branch").notNull(),
+    remote_url: text("remote_url"),
+    local_path: text("local_path"),
+    status: text("status", { enum: ["ready", "provisioning", "error"] })
+      .notNull()
+      .default("ready"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_workspaces_user_project_updated").on(
+      table.user_id,
+      table.project_id,
+      table.updated_at
+    ),
+    index("idx_workspaces_project").on(table.project_id),
+  ]
+);
+
 export const conversations = sqliteTable(
   "conversations",
   {
@@ -87,12 +170,39 @@ export const conversations = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     title: text("title").notNull().default("New Conversation"),
     letta_agent_id: text("letta_agent_id"),
+    execution_target: text("execution_target", {
+      enum: ["default", "sandbox"],
+    })
+      .notNull()
+      .default("default"),
+    office_id: text("office_id").references(() => offices.id, {
+      onDelete: "set null",
+    }),
+    workspace_id: text("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     // Covers WHERE user_id = ? ORDER BY updated_at DESC (listConversations)
     index("idx_conversations_user_updated").on(table.user_id, table.updated_at),
+    // Covers WHERE user_id = ? AND execution_target = ? ORDER BY updated_at DESC
+    index("idx_conversations_user_target_updated").on(
+      table.user_id,
+      table.execution_target,
+      table.updated_at
+    ),
+    index("idx_conversations_user_office_updated").on(
+      table.user_id,
+      table.office_id,
+      table.updated_at
+    ),
+    index("idx_conversations_workspace_updated").on(
+      table.user_id,
+      table.workspace_id,
+      table.updated_at
+    ),
   ]
 );
 
@@ -101,7 +211,7 @@ export const userApiKeys = sqliteTable(
   {
     user_id: text("user_id")
       .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
+      .references(() => offices.id, { onDelete: "cascade" }),
     provider: text("provider").notNull(),
     encrypted_key: text("encrypted_key").notNull(),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
@@ -120,10 +230,16 @@ export const mcpServers = sqliteTable(
     name: text("name").notNull(),
     url: text("url").notNull(),
     auth_type: text("auth_type").notNull().default("none"),
+    scope: text("scope", { enum: ["global", "sandbox"] })
+      .notNull()
+      .default("global"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_mcp_servers_user").on(table.user_id)]
+  (table) => [
+    index("idx_mcp_servers_user").on(table.user_id),
+    index("idx_mcp_servers_user_scope").on(table.user_id, table.scope),
+  ]
 );
 
 export const messages = sqliteTable(

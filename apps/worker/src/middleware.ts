@@ -21,6 +21,12 @@ export interface AuthVariables {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — detect injection via C0 controls / DEL
 const HEADER_UNSAFE_PATTERN = /[\u0000-\u001f\u007f]/;
 const MAX_USER_ID_LENGTH = 200;
+const REQUIRED_GITHUB_SCOPES = [
+  "read:user",
+  "user:email",
+  "repo",
+  "read:org",
+] as const;
 
 function isHeaderSafeUserId(id: string): boolean {
   return (
@@ -91,5 +97,22 @@ export async function getGithubToken(c: {
       message: "GitHub account not connected",
     });
   }
+
+  const grantedScopes = new Set(
+    Array.isArray(result.scopes)
+      ? result.scopes.filter(
+          (scope): scope is string => typeof scope === "string"
+        )
+      : []
+  );
+  const missingScopes = REQUIRED_GITHUB_SCOPES.filter(
+    (scope) => !grantedScopes.has(scope)
+  );
+  if (missingScopes.length > 0) {
+    throw new HTTPException(403, {
+      message: `GitHub token lacks required permissions: ${missingScopes.join(", ")}`,
+    });
+  }
+
   return result.accessToken;
 }

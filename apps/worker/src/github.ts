@@ -14,7 +14,87 @@ const GITHUB_MAX_PER_PAGE = 100; // GitHub API hard limit for per_page
 
 // ── Error Handling ──
 
-function handleGithubError(status: number): never {
+export type GithubUnprocessableKind =
+  | "branch_already_exists"
+  | "pull_request_already_exists"
+  | "unknown";
+
+function pushIfString(
+  strings: string[],
+  record: Record<string, unknown>,
+  key: string
+): void {
+  const value = record[key];
+  if (typeof value === "string") {
+    strings.push(value);
+  }
+}
+
+function entryErrorStrings(value: unknown): string[] {
+  if (value === null || typeof value !== "object") {
+    return [];
+  }
+  const entry = value as Record<string, unknown>;
+  const strings: string[] = [];
+  pushIfString(strings, entry, "message");
+  pushIfString(strings, entry, "code");
+  pushIfString(strings, entry, "field");
+  pushIfString(strings, entry, "resource");
+  return strings;
+}
+
+function extractGithubErrorStrings(body: unknown): string[] {
+  if (body === null || typeof body !== "object") {
+    return [];
+  }
+
+  const record = body as Record<string, unknown>;
+  const strings: string[] = [];
+  pushIfString(strings, record, "message");
+
+  const rawErrors = record.errors;
+  if (!Array.isArray(rawErrors)) {
+    return strings;
+  }
+
+  for (const item of rawErrors) {
+    for (const value of entryErrorStrings(item)) {
+      strings.push(value);
+    }
+  }
+
+  return strings;
+}
+
+export function classifyGithubUnprocessable(
+  body: unknown,
+  path: string
+): GithubUnprocessableKind {
+  const text = extractGithubErrorStrings(body).join(" ").toLowerCase();
+
+  const isPullConflict =
+    text.includes("pull request already exists") ||
+    text.includes("a pull request already exists") ||
+    (path.endsWith("/pulls") &&
+      text.includes("already exists") &&
+      text.includes("pull request"));
+  if (isPullConflict) {
+    return "pull_request_already_exists";
+  }
+
+  const isBranchConflict =
+    text.includes("reference already exists") ||
+    (text.includes("already_exists") &&
+      (path.includes("/git/refs") || text.includes("refs/heads"))) ||
+    (path.includes("/git/refs") && text.includes("already exists"));
+  if (isBranchConflict) {
+    return "branch_already_exists";
+  }
+
+  return "unknown";
+}
+
+function handleGithubError(status: number, body: unknown, path: string): never {
   if (status === 401) {
     throw new HTTPException(401, {
       message: "GitHub token is invalid or expired",
@@ -31,6 +111,22 @@ function handleGithubError(status: number): never {
   if (status === 429) {
     throw new HTTPException(429, {
       message: "GitHub API rate limit exceeded",
+    });
+  }
+  if (status === 422) {
+    const kind = classifyGithubUnprocessable(body, path);
+    if (kind === "branch_already_exists") {
+      throw new HTTPException(409, {
+        message: "GitHub branch already exists",
+      });
+    }
+    if (kind === "pull_request_already_exists") {
+      throw new HTTPException(409, {
+        message: "GitHub pull request already exists",
+      });
+    }
+    throw new HTTPException(409, {
+      message: "GitHub rejected the request",
     });
   }
   throw new HTTPException(502, { message: "GitHub API request failed" });
@@ -50,18 +146,35 @@ function throwResponseTooLarge(): never {
 
 // ── Fetch Helper ──
 
-async function githubFetch(token: string, path: string): Promise<unknown> {
+interface GithubFetchOptions {
+  method?: "GET" | "POST";
+  body?: Record<string, unknown>;
+}
+
+async function githubFetch(
+  token: string,
+  path: string,
+  options: GithubFetchOptions = {}
+): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const method = options.method ?? "GET";
+  const headers = new Headers({
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  });
+  const hasBody = options.body !== undefined;
+  if (hasBody) {
+    headers.set("Content-Type", "application/json");
+  }
 
   let response: Response;
   try {
     response = await fetch(`${GITHUB_API}${path}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
+      method,
+      headers,
+      body: hasBody ? JSON.stringify(options.body) : undefined,
       signal: controller.signal,
     });
   } catch (err) {
@@ -74,7 +187,16 @@ async function githubFetch(token: string, path: string): Promise<unknown> {
   }
 
   if (!response.ok) {
-    handleGithubError(response.status);
+    const errorText = await response.text();
+    let errorBody: unknown = null;
+    if (errorText.trim().length > 0) {
+      try {
+        errorBody = JSON.parse(errorText);
+      } catch {
+        errorBody = { message: errorText };
+      }
+    }
+    handleGithubError(response.status, errorBody, path);
   }
 
   const contentLength = response.headers.get("Content-Length");
@@ -216,27 +338,111 @@ export interface GithubListOptions {
   page?: number;
 }
 
+export interface CreateGithubBranchInput {
+  name: string;
+  from: string;
+}
+
+export interface CreateGithubPullRequestInput {
+  title: string;
+  head: string;
+  base: string;
+  body?: string;
+}
+
 export async function listUserRepos(
   token: string,
   options: GithubListOptions & { affiliation?: string } = {}
 ): Promise<GithubRepo[]> {
-  const params = new URLSearchParams();
-  params.set(
-    "per_page",
-    String(Math.min(options.perPage ?? 30, GITHUB_MAX_PER_PAGE))
-  );
-  params.set("page", String(options.page ?? 1));
-  params.set(
-    "affiliation",
-    options.affiliation ?? "owner,collaborator,organization_member"
-  );
-  params.set("sort", "updated");
+  const perPage = String(Math.min(options.perPage ?? 30, GITHUB_MAX_PER_PAGE));
+  const page = String(options.page ?? 1);
+  const requestedAffiliation =
+    options.affiliation ?? "owner,collaborator,organization_member";
 
-  const data = await githubFetch(token, `/user/repos?${params.toString()}`);
-  if (!Array.isArray(data)) {
-    badUpstream();
+  const buildPath = (affiliation?: string) => {
+    const params = new URLSearchParams();
+    params.set("per_page", perPage);
+    params.set("page", page);
+    if (affiliation) {
+      params.set("affiliation", affiliation);
+    }
+    params.set("sort", "updated");
+    return `/user/repos?${params.toString()}`;
+  };
+
+  const listPublicOwnerRepos = async (): Promise<GithubRepo[]> => {
+    const user = await githubFetch(token, "/user");
+    const userRecord = toRecord(user);
+    const login = userRecord?.login;
+    if (typeof login !== "string" || login.length === 0) {
+      badUpstream();
+    }
+
+    const params = new URLSearchParams();
+    params.set("per_page", perPage);
+    params.set("page", page);
+    params.set("sort", "updated");
+    const data = await githubFetch(
+      token,
+      `/users/${login}/repos?${params.toString()}`
+    );
+
+    if (!Array.isArray(data)) {
+      badUpstream();
+    }
+    return data.map((item) => pickRepo(toRecord(item) ?? badUpstream()));
+  };
+
+  const affiliationStrategies: Array<string | undefined> = [];
+  for (const value of [
+    requestedAffiliation,
+    undefined,
+    "owner,collaborator",
+    "owner",
+    "collaborator",
+    "organization_member",
+  ]) {
+    if (!affiliationStrategies.includes(value)) {
+      affiliationStrategies.push(value);
+    }
   }
-  return data.map((item) => pickRepo(toRecord(item) ?? badUpstream()));
+
+  const reposById = new Map<number, GithubRepo>();
+  let sawForbidden = false;
+
+  for (const affiliation of affiliationStrategies) {
+    let data: unknown;
+    try {
+      data = await githubFetch(token, buildPath(affiliation));
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 403) {
+        sawForbidden = true;
+        continue;
+      }
+      throw error;
+    }
+
+    if (!Array.isArray(data)) {
+      badUpstream();
+    }
+
+    for (const item of data) {
+      const repo = pickRepo(toRecord(item) ?? badUpstream());
+      reposById.set(repo.id, repo);
+    }
+  }
+
+  if (reposById.size > 0) {
+    return [...reposById.values()].sort((a, b) =>
+      b.updated_at.localeCompare(a.updated_at)
+    );
+  }
+
+  if (sawForbidden) {
+    return await listPublicOwnerRepos();
+  }
+
+  return [];
 }
 
 export async function listPullRequests(
@@ -320,4 +526,66 @@ export async function listBranches(
     badUpstream();
   }
   return data.map((item) => pickBranch(toRecord(item) ?? badUpstream()));
+}
+
+export async function createBranch(
+  token: string,
+  owner: string,
+  repo: string,
+  input: CreateGithubBranchInput
+): Promise<GithubBranch> {
+  const source = await githubFetch(
+    token,
+    `/repos/${owner}/${repo}/branches/${encodeURIComponent(input.from)}`
+  );
+  const sourceRecord = toRecord(source);
+  const sourceCommit = toRecord(sourceRecord?.commit);
+  const sourceSha = sourceCommit?.sha;
+  if (typeof sourceSha !== "string" || sourceSha.length === 0) {
+    badUpstream();
+  }
+
+  const created = await githubFetch(token, `/repos/${owner}/${repo}/git/refs`, {
+    method: "POST",
+    body: {
+      ref: `refs/heads/${input.name}`,
+      sha: sourceSha,
+    },
+  });
+
+  const createdRecord = toRecord(created);
+  const ref = createdRecord?.ref;
+  const obj = toRecord(createdRecord?.object);
+  const sha = obj?.sha;
+  if (typeof ref !== "string" || !ref.startsWith("refs/heads/")) {
+    badUpstream();
+  }
+  if (typeof sha !== "string" || sha.length === 0) {
+    badUpstream();
+  }
+
+  return {
+    name: ref.slice("refs/heads/".length),
+    commit: { sha },
+    protected: false,
+  };
+}
+
+export async function createPullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  input: CreateGithubPullRequestInput
+): Promise<GithubPR> {
+  const created = await githubFetch(token, `/repos/${owner}/${repo}/pulls`, {
+    method: "POST",
+    body: {
+      title: input.title,
+      head: input.head,
+      base: input.base,
+      body: input.body,
+    },
+  });
+
+  return pickPR(toRecord(created) ?? badUpstream());
 }

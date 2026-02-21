@@ -1,11 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   createConversation,
   listConversations,
+  type ConversationExecutionTarget,
   type Conversation,
 } from "@nosis/lib/worker-api";
+
+interface UseConversationsOptions {
+  executionTarget?: ConversationExecutionTarget;
+  workspaceId?: string;
+  officeId?: string;
+}
 
 interface UseConversationsResult {
   conversations: Conversation[];
@@ -13,69 +21,117 @@ interface UseConversationsResult {
   isCreating: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  createNewConversation: (title?: string) => Promise<Conversation>;
+  createNewConversation: (options?: {
+    title?: string;
+    executionTarget?: ConversationExecutionTarget;
+    workspaceId?: string;
+    officeId?: string;
+  }) => Promise<Conversation>;
 }
 
-export function useConversations(): UseConversationsResult {
+function toConversationListError(error: unknown): string {
+  if (error instanceof ApiError && error.status >= 500) {
+    return "Could not load chats right now. Please refresh in a moment.";
+  }
+  return error instanceof Error
+    ? error.message
+    : "Failed to load conversations";
+}
+
+export function useConversations(
+  options?: UseConversationsOptions
+): UseConversationsResult {
+  const defaultExecutionTarget = options?.executionTarget;
+  const defaultWorkspaceId = options?.workspaceId;
+  const defaultOfficeId = options?.officeId;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
-  const refresh = useCallback(async () => {
-    setError(null);
-    try {
-      const rows = await listConversations(100, 0);
-      setConversations(rows);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load conversations"
-      );
-    }
-  }, []);
+  const loadConversations = useCallback(
+    async (showLoading: boolean) => {
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
 
-  useEffect(() => {
-    let cancelled = false;
+      if (showLoading) {
+        setIsLoading(true);
+      }
+      setError(null);
 
-    setIsLoading(true);
-    listConversations(100, 0)
-      .then((rows) => {
-        if (cancelled) {
+      try {
+        const rows = await listConversations(
+          100,
+          0,
+          defaultExecutionTarget,
+          defaultWorkspaceId,
+          defaultOfficeId
+        );
+        if (requestId !== requestIdRef.current) {
           return;
         }
         setConversations(rows);
-        setError(null);
-      })
-      .catch((err) => {
-        if (cancelled) {
+      } catch (err) {
+        if (requestId !== requestIdRef.current) {
           return;
         }
-        setError(
-          err instanceof Error ? err.message : "Failed to load conversations"
-        );
-      })
-      .finally(() => {
-        if (!cancelled) {
+        setError(toConversationListError(err));
+      } finally {
+        if (showLoading && requestId === requestIdRef.current) {
           setIsLoading(false);
         }
-      });
+      }
+    },
+    [defaultExecutionTarget, defaultOfficeId, defaultWorkspaceId]
+  );
 
+  const refresh = useCallback(async () => {
+    await loadConversations(false);
+  }, [loadConversations]);
+
+  useEffect(() => {
+    loadConversations(true).catch(() => undefined);
     return () => {
-      cancelled = true;
+      requestIdRef.current += 1;
     };
-  }, []);
+  }, [loadConversations]);
 
-  const createNewConversation = useCallback(async (title?: string) => {
-    setIsCreating(true);
-    setError(null);
-    try {
-      const conversation = await createConversation(title);
-      setConversations((existing) => [conversation, ...existing]);
-      return conversation;
-    } finally {
-      setIsCreating(false);
-    }
-  }, []);
+  const createNewConversation = useCallback(
+    async (createOptions?: {
+      title?: string;
+      executionTarget?: ConversationExecutionTarget;
+      workspaceId?: string;
+      officeId?: string;
+    }) => {
+      setIsCreating(true);
+      setError(null);
+      try {
+        const conversation = await createConversation({
+          title: createOptions?.title,
+          executionTarget:
+            createOptions?.executionTarget ?? defaultExecutionTarget,
+          workspaceId: createOptions?.workspaceId ?? defaultWorkspaceId,
+          officeId: createOptions?.officeId ?? defaultOfficeId,
+        });
+        setConversations((existing) => {
+          if (existing.some((item) => item.id === conversation.id)) {
+            return existing;
+          }
+          return [conversation, ...existing];
+        });
+        return conversation;
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create conversation"
+        );
+        throw err;
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    [defaultExecutionTarget, defaultOfficeId, defaultWorkspaceId]
+  );
 
   return {
     conversations,

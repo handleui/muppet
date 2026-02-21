@@ -91,6 +91,7 @@ See `ARCHITECTURE.md` for full details.
 - Package manager: **bun** (not pnpm/npm/yarn)
 - Keep the binary small — release profile uses LTO + strip
 - Commits and PR titles use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, etc.)
+- Do not edit SQL migration files or Drizzle-generated files (`apps/worker/drizzle/**`) unless explicitly requested
 
 ## Code Quality
 

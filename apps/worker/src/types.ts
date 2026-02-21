@@ -1,4 +1,11 @@
-import type { conversations, mcpServers, messages } from "./schema";
+import type {
+  conversations,
+  offices,
+  mcpServers,
+  messages,
+  projects,
+  workspaces,
+} from "./schema";
 
 // ── Worker Bindings ──
 
@@ -74,6 +81,16 @@ export interface ScrapeResponse {
 // ── Conversations ──
 
 export type Conversation = typeof conversations.$inferSelect;
+export type ConversationExecutionTarget =
+  (typeof conversations.$inferSelect)["execution_target"];
+
+// ── Projects / Workspaces ──
+
+export type Office = typeof offices.$inferSelect;
+export type Project = typeof projects.$inferSelect;
+export type Workspace = typeof workspaces.$inferSelect;
+export type WorkspaceKind = (typeof workspaces.$inferSelect)["kind"];
+export type WorkspaceStatus = (typeof workspaces.$inferSelect)["status"];
 
 // ── Messages ──
 
@@ -82,6 +99,7 @@ export type Message = typeof messages.$inferSelect;
 // ── MCP Servers ──
 
 export type McpServer = typeof mcpServers.$inferSelect;
+export type McpServerScope = (typeof mcpServers.$inferSelect)["scope"];
 
 // ── GitHub ──
 
