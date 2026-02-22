@@ -1,5 +1,4 @@
 import {
-  LEGACY_DEFAULT_EXECUTION_TARGET,
   SANDBOX_EXECUTION_TARGET,
   type CloudExecutionTarget,
 } from "@nosis/agent-runtime/execution";
@@ -224,10 +223,7 @@ export function validateChatMessageCount(count: number): void {
 export function validateExecutionTarget(
   value: unknown
 ): ConversationExecutionTarget {
-  if (
-    value === SANDBOX_EXECUTION_TARGET ||
-    value === LEGACY_DEFAULT_EXECUTION_TARGET
-  ) {
+  if (value === SANDBOX_EXECUTION_TARGET) {
     return SANDBOX_EXECUTION_TARGET;
   }
   badRequest(`execution_target must be '${SANDBOX_EXECUTION_TARGET}'`);

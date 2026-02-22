@@ -26,6 +26,12 @@ export async function reconnectGithubSignIn(
   callbackURL: string
 ): Promise<void> {
   const socialLinkClient = authClient as typeof authClient & {
+    linkSocial?: (input: {
+      provider: "github";
+      callbackURL: string;
+      errorCallbackURL?: string;
+      scopes?: string[];
+    }) => Promise<unknown>;
     linkSocialAccount?: (input: {
       provider: "github";
       callbackURL: string;
@@ -34,8 +40,23 @@ export async function reconnectGithubSignIn(
     }) => Promise<unknown>;
   };
 
-  if (typeof socialLinkClient.linkSocialAccount === "function") {
-    const result = await socialLinkClient.linkSocialAccount({
+  let linkSocial:
+    | ((input: {
+        provider: "github";
+        callbackURL: string;
+        errorCallbackURL?: string;
+        scopes?: string[];
+      }) => Promise<unknown>)
+    | null = null;
+
+  if (typeof socialLinkClient.linkSocial === "function") {
+    linkSocial = socialLinkClient.linkSocial;
+  } else if (typeof socialLinkClient.linkSocialAccount === "function") {
+    linkSocial = socialLinkClient.linkSocialAccount;
+  }
+
+  if (linkSocial) {
+    const result = await linkSocial({
       provider: "github",
       callbackURL,
       errorCallbackURL: callbackURL,

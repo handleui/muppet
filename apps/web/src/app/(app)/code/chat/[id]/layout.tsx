@@ -58,7 +58,7 @@ export default function CodeConversationLayout({
     if (!grid) {
       return;
     }
-    const isCurrentlyOpen = grid.widths.right > 0;
+    const isCurrentlyOpen = grid.getWidths().right > 0;
     if (isCurrentlyOpen) {
       grid.setWidths(0, 0, 180);
       return;

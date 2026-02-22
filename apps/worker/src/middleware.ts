@@ -27,6 +27,22 @@ const REQUIRED_GITHUB_SCOPES = [
   "repo",
   "read:org",
 ] as const;
+const SCOPE_SPLIT_PATTERN = /[,\s]+/u;
+
+function parseScopes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((scope): scope is string => typeof scope === "string");
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(SCOPE_SPLIT_PATTERN)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+  }
+
+  return [];
+}
 
 function isHeaderSafeUserId(id: string): boolean {
   return (
@@ -88,29 +104,43 @@ export async function getGithubToken(c: {
   req: { raw: Request };
 }): Promise<string> {
   const auth = c.get("auth");
-  const result = await auth.api.getAccessToken({
+  const result = (await auth.api.getAccessToken({
     body: { providerId: "github" },
     headers: c.req.raw.headers,
-  });
+  })) as
+    | {
+        accessToken?: unknown;
+        scopes?: unknown;
+        scope?: unknown;
+      }
+    | undefined;
   if (!result?.accessToken) {
     throw new HTTPException(401, {
       message: "GitHub account not connected",
     });
   }
 
-  const grantedScopes = new Set(
-    Array.isArray(result.scopes)
-      ? result.scopes.filter(
-          (scope): scope is string => typeof scope === "string"
-        )
-      : []
-  );
-  const missingScopes = REQUIRED_GITHUB_SCOPES.filter(
-    (scope) => !grantedScopes.has(scope)
-  );
-  if (missingScopes.length > 0) {
-    throw new HTTPException(403, {
-      message: `GitHub token lacks required permissions: ${missingScopes.join(", ")}`,
+  const grantedScopes = new Set([
+    ...parseScopes(result.scopes),
+    ...parseScopes(result.scope),
+  ]);
+  if (grantedScopes.size > 0) {
+    const missingScopes = REQUIRED_GITHUB_SCOPES.filter(
+      (scope) => !grantedScopes.has(scope)
+    );
+    if (missingScopes.length > 0) {
+      throw new HTTPException(403, {
+        message: `GitHub token lacks required permissions: ${missingScopes.join(", ")}`,
+      });
+    }
+  }
+
+  if (
+    typeof result.accessToken !== "string" ||
+    result.accessToken.length === 0
+  ) {
+    throw new HTTPException(401, {
+      message: "GitHub account not connected",
     });
   }
 

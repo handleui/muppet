@@ -10,8 +10,7 @@ import {
   type ToolSet,
   type UIMessage,
 } from "ai";
-import { resolveOrCreateAgentId } from "@nosis/agent-runtime";
-import { canonicalizeExecutionTarget } from "@nosis/agent-runtime/execution";
+import { resolveOrCreateAgentIdFromAdapter } from "@nosis/agent-runtime/agent-id";
 import { createProvider } from "@nosis/provider";
 import { HTTPException } from "hono/http-exception";
 import { buildSkillSystemPrompt, type ChatSkillId } from "./chat-skills";
@@ -19,10 +18,8 @@ import {
   type AppDatabase,
   getConversationRuntime,
   saveMessageBatch,
-  trySetConversationAgentId,
 } from "./db";
-import { getActiveTools } from "./mcp";
-import { sanitizeError } from "./sanitize";
+import { createWorkerRuntimeAdapter } from "./runtime-adapter";
 import type { Bindings } from "./types";
 
 const MAX_AGENT_STEPS = 8;
@@ -225,31 +222,25 @@ export async function streamChat(
   lettaApiKey: string,
   conversationId: string,
   userId: string,
-  officeId: string,
   input: StreamChatInput,
   ctx: ExecutionContext,
   env: Bindings
 ): Promise<Response> {
   const runtime = await getConversationRuntime(db, conversationId, userId);
+  const runtimeAdapter = createWorkerRuntimeAdapter({
+    db,
+    env,
+    ctx,
+    userId,
+    conversationId,
+    initialRuntime: runtime,
+    lettaApiKey,
+  });
   const provider = createProvider(lettaApiKey);
-  const agentId = await resolveOrCreateAgentId({
+  const agentId = await resolveOrCreateAgentIdFromAdapter({
     provider,
     agentSeed: conversationId,
-    getExistingAgentId: async () => runtime.letta_agent_id,
-    claimAgentId: async (newAgentId) =>
-      await trySetConversationAgentId(db, conversationId, userId, newAgentId),
-    getWinningAgentId: async () => {
-      const winnerRuntime = await getConversationRuntime(
-        db,
-        conversationId,
-        userId
-      );
-      return winnerRuntime.letta_agent_id;
-    },
-    schedule: (task) => ctx.waitUntil(task),
-    onError: (message, error) => {
-      console.error(message, sanitizeError(error, [lettaApiKey]));
-    },
+    adapter: runtimeAdapter,
     errorContext: `conversation=${conversationId}`,
   }).catch((error: unknown) => {
     throw new HTTPException(500, {
@@ -284,27 +275,12 @@ export async function streamChat(
   }
 
   // Save user message and load MCP tools in parallel (independent operations)
-  const toolsTask = getActiveTools(
-    db,
-    env,
-    userId,
-    officeId,
-    canonicalizeExecutionTarget(runtime.execution_target)
-  );
+  const toolsTask = runtimeAdapter.loadTools(runtime.execution_target);
   let toolsResult: Awaited<typeof toolsTask>;
   if (shouldPersistUserMessage) {
     const [loadedTools] = await Promise.all([
       toolsTask,
-      saveMessageBatch(
-        db,
-        crypto.randomUUID(),
-        conversationId,
-        "user",
-        trimForStorage(userContent),
-        null,
-        0,
-        0
-      ),
+      runtimeAdapter.saveUserMessage(trimForStorage(userContent)),
     ]);
     toolsResult = loadedTools;
   } else {
@@ -324,11 +300,11 @@ export async function streamChat(
       return;
     }
     finalized = true;
-    ctx.waitUntil(
+    runtimeAdapter.schedule(
       task().catch((error: unknown) => {
-        console.error(
-          `Failed finalization [conversation=${conversationId}]:`,
-          sanitizeError(error, [lettaApiKey])
+        runtimeAdapter.onError(
+          `Failed finalization [conversation=${conversationId}]`,
+          error
         );
       })
     );
@@ -421,10 +397,7 @@ export async function streamChat(
         });
       },
       onError({ error }) {
-        console.error(
-          "streamText error:",
-          sanitizeError(error, [lettaApiKey, env.BETTER_AUTH_SECRET])
-        );
+        runtimeAdapter.onError("streamText error", error);
       },
     });
   } catch (error: unknown) {
@@ -444,9 +417,9 @@ export async function streamChat(
       consumeStream({
         stream,
         onError: (error: unknown) => {
-          console.error(
-            `SSE consume error [conversation=${conversationId}]:`,
-            sanitizeError(error, [lettaApiKey, env.BETTER_AUTH_SECRET])
+          runtimeAdapter.onError(
+            `SSE consume error [conversation=${conversationId}]`,
+            error
           );
         },
       }),

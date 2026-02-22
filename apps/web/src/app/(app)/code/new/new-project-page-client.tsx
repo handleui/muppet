@@ -4,6 +4,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCodeWorkspace } from "@nosis/components/code-workspace-provider";
+import { GithubRepoList } from "@nosis/components/github-repo-list";
 import {
   listGithubRepos,
   type GithubRepo,
@@ -16,9 +17,37 @@ import {
 } from "@nosis/lib/github-session";
 
 interface AccessTokenPayload {
+  scopes?: unknown;
+  scope?: unknown;
   data?: {
     scopes?: unknown;
+    scope?: unknown;
   };
+}
+const SCOPE_SPLIT_PATTERN = /[,\s]+/u;
+
+function parseScopes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((scope): scope is string => typeof scope === "string");
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(SCOPE_SPLIT_PATTERN)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+  }
+
+  return [];
+}
+
+function readGrantedScopes(payload: AccessTokenPayload): string[] {
+  return [
+    ...parseScopes(payload.scopes),
+    ...parseScopes(payload.scope),
+    ...parseScopes(payload.data?.scopes),
+    ...parseScopes(payload.data?.scope),
+  ];
 }
 
 export default function NewProjectPageClient() {
@@ -51,11 +80,7 @@ export default function NewProjectPageClient() {
       const tokenResponse = (await authClient.getAccessToken({
         providerId: "github",
       })) as AccessTokenPayload;
-      const grantedScopes = Array.isArray(tokenResponse.data?.scopes)
-        ? tokenResponse.data.scopes.filter(
-            (scope): scope is string => typeof scope === "string"
-          )
-        : [];
+      const grantedScopes = readGrantedScopes(tokenResponse);
       const missingScopes = REQUIRED_GITHUB_SCOPES.filter(
         (scope) => !grantedScopes.includes(scope)
       );
@@ -75,9 +100,8 @@ export default function NewProjectPageClient() {
         setSelectedRepoUrl(defaultRepoUrl);
       }
       if (rows.length === 0) {
-        setNeedsGithubReconnect(true);
         setReposError(
-          "No repositories are visible for this GitHub token. Reconnect GitHub and ensure org app access is approved."
+          "GitHub returned zero repositories for this account. If you expect private/org repos, verify org OAuth app approval or SSO authorization in GitHub."
         );
       }
     } catch (error) {
@@ -90,6 +114,7 @@ export default function NewProjectPageClient() {
       if (shouldReconnect) {
         setRepos([]);
         setNeedsGithubReconnect(true);
+        setReposError(message);
       } else {
         setReposError(message);
       }
@@ -153,36 +178,15 @@ export default function NewProjectPageClient() {
             </p>
           </div>
 
-          <div className="space-y-2">
-            <label
-              className="block font-normal text-[#808080] text-xs tracking-[-0.36px]"
-              htmlFor="repo-select"
-            >
-              Repository
-            </label>
-            <select
-              className="h-10 w-full rounded border border-[#dadadd] px-3 text-sm outline-none focus:border-black"
-              disabled={isReposLoading || isSubmitting}
-              id="repo-select"
-              onChange={(event) => {
-                const nextRepoUrl = event.target.value;
-                setSelectedRepoUrl(nextRepoUrl);
-              }}
-              value={selectedRepoUrl}
-            >
-              <option value="">
-                {isReposLoading ? "Loading repos..." : "Select a GitHub repo"}
-              </option>
-              {repos.map((repo) => {
-                const optionRepoUrl = `https://github.com/${repo.full_name}`;
-                return (
-                  <option key={repo.id} value={optionRepoUrl}>
-                    {repo.full_name}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
+          <GithubRepoList
+            isDisabled={isSubmitting}
+            isLoading={isReposLoading}
+            onSelectRepoUrl={(repoUrl) => {
+              setSelectedRepoUrl(repoUrl);
+            }}
+            repos={repos}
+            selectedRepoUrl={selectedRepoUrl}
+          />
 
           {needsGithubReconnect ? (
             <div className="flex items-center justify-between gap-3 rounded border border-[#dfe7f3] bg-[#f8fbff] px-3 py-2">

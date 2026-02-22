@@ -159,9 +159,8 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
       setProjectError(
         err instanceof Error ? err.message : "Failed to load projects"
       );
-    } finally {
-      setIsProjectsLoading(false);
     }
+    setIsProjectsLoading(false);
   }, []);
 
   const refreshWorkspaces = useCallback(async () => {
@@ -174,40 +173,46 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspaceError(
         err instanceof Error ? err.message : "Failed to load workspaces"
       );
-    } finally {
-      setIsWorkspacesLoading(false);
     }
+    setIsWorkspacesLoading(false);
   }, []);
 
   useEffect(() => {
-    refreshProjects().catch(() => undefined);
-    refreshWorkspaces().catch(() => undefined);
+    const timer = window.setTimeout(() => {
+      refreshProjects().catch(() => undefined);
+      refreshWorkspaces().catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshProjects, refreshWorkspaces]);
 
   useEffect(() => {
-    if (!selectedProjectId) {
-      setSelectedWorkspaceId(null);
-      return;
-    }
+    const timer = window.setTimeout(() => {
+      if (!selectedProjectId) {
+        setSelectedWorkspaceId(null);
+        return;
+      }
 
-    setSelectedWorkspaceId((current) =>
-      resolveSelectedId(SELECTED_WORKSPACE_STORAGE_KEY, current, workspaces)
-    );
+      setSelectedWorkspaceId((current) =>
+        resolveSelectedId(SELECTED_WORKSPACE_STORAGE_KEY, current, workspaces)
+      );
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [selectedProjectId, workspaces]);
 
   useEffect(() => {
-    if (isProjectsLoading) {
+    if (!selectedProjectId) {
       return;
     }
     persistSelectedId(SELECTED_PROJECT_STORAGE_KEY, selectedProjectId);
-  }, [isProjectsLoading, selectedProjectId]);
+  }, [selectedProjectId]);
 
   useEffect(() => {
-    if (isWorkspacesLoading) {
+    if (!selectedWorkspaceId) {
       return;
     }
     persistSelectedId(SELECTED_WORKSPACE_STORAGE_KEY, selectedWorkspaceId);
-  }, [isWorkspacesLoading, selectedWorkspaceId]);
+  }, [selectedWorkspaceId]);
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -234,14 +239,14 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
       const project = await createProject({ repoUrl: trimmed });
       setProjects((existing) => upsertById(existing, project));
       setSelectedProjectId(project.id);
+      setIsCreatingProject(false);
       return project;
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to create project";
       setProjectError(message);
-      throw err;
-    } finally {
       setIsCreatingProject(false);
+      throw err;
     }
   }, []);
 
@@ -263,31 +268,32 @@ export function CodeWorkspaceProvider({ children }: { children: ReactNode }) {
 
       setIsCreatingWorkspace(true);
       setWorkspaceError(null);
+      const workspaceInput = {
+        projectId,
+        kind: options?.kind ?? "cloud",
+        name: options?.name,
+        baseBranch: options?.baseBranch,
+        workingBranch: options?.workingBranch,
+        remoteUrl: options?.remoteUrl,
+        localPath: options?.localPath,
+        status: options?.status,
+      };
 
       try {
-        const workspace = await createWorkspace({
-          projectId,
-          kind: options?.kind ?? "cloud",
-          name: options?.name,
-          baseBranch: options?.baseBranch,
-          workingBranch: options?.workingBranch,
-          remoteUrl: options?.remoteUrl,
-          localPath: options?.localPath,
-          status: options?.status,
-        });
+        const workspace = await createWorkspace(workspaceInput);
 
         setAllWorkspaces((existing) => upsertById(existing, workspace));
         setSelectedProjectId(projectId);
         setSelectedWorkspaceId(workspace.id);
 
+        setIsCreatingWorkspace(false);
         return workspace;
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to create workspace";
         setWorkspaceError(message);
-        throw err;
-      } finally {
         setIsCreatingWorkspace(false);
+        throw err;
       }
     },
     [selectedProjectId]

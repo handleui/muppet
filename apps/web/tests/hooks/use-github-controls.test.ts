@@ -37,7 +37,7 @@ const mockGetGitWorkspaceErrorMessage = vi.mocked(getGitWorkspaceErrorMessage);
 const project = {
   id: "project-1",
   user_id: "user-1",
-  office_id: null,
+  office_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   repo_url: "https://github.com/acme/repo",
   owner: "acme",
   repo: "repo",
@@ -306,6 +306,138 @@ describe("useGithubControls", () => {
     expect(runtime.openPullRequest).not.toHaveBeenCalled();
   });
 
+  it("validates head and base branch before runtime calls", async () => {
+    const runtime = {
+      target: "web" as const,
+      ensureRepo: vi.fn(),
+      ensureWorkspaceBranch: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      openPullRequest: vi.fn(),
+    };
+    mockCreateGitWorkspaceRuntime.mockReturnValue(runtime);
+    mockFetchPullRequests.mockResolvedValueOnce([]);
+    mockFetchGithubBranches.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() =>
+      useGithubControls({ project, workspace })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isPullsLoading).toBe(false);
+      expect(result.current.isBranchesLoading).toBe(false);
+    });
+
+    await expect(
+      result.current.createPullRequest({
+        title: "Valid title",
+        head: "   ",
+        base: "main",
+      })
+    ).rejects.toThrow("Head branch is required");
+    await waitFor(() => {
+      expect(result.current.actionError).toBe(
+        "Create or enter a branch before opening a PR"
+      );
+    });
+
+    await expect(
+      result.current.createPullRequest({
+        title: "Valid title",
+        head: "feat/x",
+        base: "   ",
+      })
+    ).rejects.toThrow("Base branch is required");
+    await waitFor(() => {
+      expect(result.current.actionError).toBe("Base branch is required");
+    });
+    expect(runtime.ensureRepo).not.toHaveBeenCalled();
+    expect(runtime.openPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("creates a pull request and refreshes list with runtime result", async () => {
+    const runtime = {
+      target: "web" as const,
+      ensureRepo: vi.fn().mockResolvedValue({ owner: "acme", repo: "repo" }),
+      ensureWorkspaceBranch: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      openPullRequest: vi.fn().mockResolvedValue({
+        number: 22,
+        title: "Add tests",
+        state: "open",
+        head: { ref: "feat/tests", sha: "abc" },
+        base: { ref: "main" },
+        user: { login: "me", avatar_url: "" },
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }),
+    };
+    mockCreateGitWorkspaceRuntime.mockReturnValue(runtime);
+    mockFetchPullRequests.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        number: 22,
+        title: "Add tests",
+        state: "open",
+        head: { ref: "feat/tests", sha: "abc" },
+        base: { ref: "main" },
+        user: { login: "me", avatar_url: "" },
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+    mockFetchGithubBranches.mockResolvedValueOnce([]);
+    mockFetchPullRequestDetail.mockResolvedValueOnce({
+      pr: {
+        number: 22,
+        title: "Add tests",
+        state: "open",
+        head: { ref: "feat/tests", sha: "abc" },
+        base: { ref: "main" },
+        user: { login: "me", avatar_url: "" },
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        additions: 1,
+        deletions: 0,
+        changed_files: 1,
+        body: null,
+      },
+      check_runs: [],
+    });
+
+    const { result } = renderHook(() =>
+      useGithubControls({ project, workspace })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isPullsLoading).toBe(false);
+      expect(result.current.isBranchesLoading).toBe(false);
+    });
+
+    await expect(
+      result.current.createPullRequest({
+        title: "Add tests",
+        head: "feat/tests",
+        base: "main",
+      })
+    ).resolves.toBe(22);
+
+    expect(runtime.ensureRepo).toHaveBeenCalledWith(project);
+    expect(runtime.openPullRequest).toHaveBeenCalledWith({
+      title: "Add tests",
+      head: "feat/tests",
+      base: "main",
+      body: undefined,
+    });
+
+    await waitFor(() => {
+      expect(result.current.selectedPullNumber).toBe(22);
+      expect(result.current.pulls.some((pull) => pull.number === 22)).toBe(
+        true
+      );
+    });
+  });
+
   it("rolls back optimistic PR entry when runtime PR creation fails", async () => {
     const runtime = {
       target: "web" as const,
@@ -341,5 +473,40 @@ describe("useGithubControls", () => {
       expect(result.current.actionError).toBe("Forbidden");
       expect(result.current.pulls).toHaveLength(0);
     });
+  });
+
+  it("clears action errors explicitly", async () => {
+    const runtime = {
+      target: "web" as const,
+      ensureRepo: vi.fn(),
+      ensureWorkspaceBranch: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      openPullRequest: vi.fn(),
+    };
+    mockCreateGitWorkspaceRuntime.mockReturnValue(runtime);
+    mockFetchPullRequests.mockResolvedValueOnce([]);
+    mockFetchGithubBranches.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() =>
+      useGithubControls({ project, workspace })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isPullsLoading).toBe(false);
+      expect(result.current.isBranchesLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.createBranch({ name: "feat/test", from: "   " });
+    });
+
+    expect(result.current.actionError).toBe("Base branch is required");
+
+    act(() => {
+      result.current.clearActionError();
+    });
+
+    expect(result.current.actionError).toBeNull();
   });
 });

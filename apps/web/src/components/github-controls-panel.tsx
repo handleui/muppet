@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  type ChangeEvent,
-  type FormEvent,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ChangeEvent, type FormEvent, useMemo, useState } from "react";
 import { GitPullRequest } from "iconoir-react";
 import type {
   Project,
@@ -19,6 +13,36 @@ import { Button } from "@nosis/ui/button";
 interface GithubControlsPanelProps {
   project: Project | null;
   workspace: Workspace | null;
+}
+
+function renderPullRequestDetailContent(
+  isPullDetailLoading: boolean,
+  selectedPullDetail: ReturnType<typeof useGithubControls>["selectedPullDetail"]
+) {
+  if (isPullDetailLoading) {
+    return <p className="text-[#808080] text-[12px]">Loading PR detail...</p>;
+  }
+  if (!selectedPullDetail) {
+    return (
+      <p className="text-[#808080] text-[12px]">Select a PR to inspect.</p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 text-[12px]">
+      <p className="font-medium text-black">{selectedPullDetail.pr.title}</p>
+      <p className="text-[#808080]">
+        {selectedPullDetail.pr.head.ref} → {selectedPullDetail.pr.base.ref}
+      </p>
+      <p className="text-[#808080]">
+        +{selectedPullDetail.pr.additions} / -{selectedPullDetail.pr.deletions}{" "}
+        · {selectedPullDetail.pr.changed_files} files
+      </p>
+      <p className="text-[#808080]">
+        Checks: {selectedPullDetail.check_runs.length}
+      </p>
+    </div>
+  );
 }
 
 export default function GithubControlsPanel({
@@ -60,30 +84,23 @@ export default function GithubControlsPanel({
     workspace?.base_branch ?? project?.default_branch ?? "main";
   const defaultWorkingBranch =
     workspace?.working_branch ?? suggestedBranch ?? "";
+  const defaultPrTitle = workspace ? `WIP: ${workspace.name}` : "";
 
-  const [branchNameInput, setBranchNameInput] = useState(defaultWorkingBranch);
-  const [prTitleInput, setPrTitleInput] = useState(
-    workspace ? `WIP: ${workspace.name}` : ""
-  );
+  const [branchNameInput, setBranchNameInput] = useState("");
+  const [hasEditedBranchName, setHasEditedBranchName] = useState(false);
+  const [prTitleInput, setPrTitleInput] = useState("");
+  const [hasEditedPrTitle, setHasEditedPrTitle] = useState(false);
   const [prBodyInput, setPrBodyInput] = useState("");
 
-  useEffect(() => {
-    setBranchNameInput(defaultWorkingBranch);
-  }, [defaultWorkingBranch]);
-
-  useEffect(() => {
-    if (!workspace) {
-      return;
-    }
-    setPrTitleInput((current) =>
-      current.trim().length > 0 ? current : `WIP: ${workspace.name}`
-    );
-  }, [workspace]);
+  const resolvedBranchNameInput = hasEditedBranchName
+    ? branchNameInput
+    : defaultWorkingBranch;
+  const resolvedPrTitleInput = hasEditedPrTitle ? prTitleInput : defaultPrTitle;
 
   const handleCreateBranch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     createBranch({
-      name: branchNameInput,
+      name: resolvedBranchNameInput,
       from: defaultBaseBranch,
     }).catch(() => undefined);
   };
@@ -92,19 +109,19 @@ export default function GithubControlsPanel({
     event.preventDefault();
 
     createPullRequest({
-      title: prTitleInput,
-      head: branchNameInput,
+      title: resolvedPrTitleInput,
+      head: resolvedBranchNameInput,
       base: defaultBaseBranch,
       body: prBodyInput.trim() || undefined,
     }).catch(() => undefined);
   };
 
   const isBranchSubmitDisabled =
-    isCreatingBranch || branchNameInput.trim().length === 0;
+    isCreatingBranch || resolvedBranchNameInput.trim().length === 0;
   const isPrSubmitDisabled =
     isCreatingPr ||
-    prTitleInput.trim().length === 0 ||
-    branchNameInput.trim().length === 0;
+    resolvedPrTitleInput.trim().length === 0 ||
+    resolvedBranchNameInput.trim().length === 0;
 
   const handleRefreshBranches = () => {
     refreshBranches().catch(() => undefined);
@@ -116,11 +133,13 @@ export default function GithubControlsPanel({
 
   const handleBranchNameChange = (event: ChangeEvent<HTMLInputElement>) => {
     clearActionError();
+    setHasEditedBranchName(true);
     setBranchNameInput(event.target.value);
   };
 
   const handlePrTitleChange = (event: ChangeEvent<HTMLInputElement>) => {
     clearActionError();
+    setHasEditedPrTitle(true);
     setPrTitleInput(event.target.value);
   };
 
@@ -129,31 +148,10 @@ export default function GithubControlsPanel({
     setPrBodyInput(event.target.value);
   };
 
-  let pullRequestDetailContent = (
-    <p className="text-[#808080] text-[12px]">Select a PR to inspect.</p>
+  const pullRequestDetailContent = renderPullRequestDetailContent(
+    isPullDetailLoading,
+    selectedPullDetail
   );
-  if (isPullDetailLoading) {
-    pullRequestDetailContent = (
-      <p className="text-[#808080] text-[12px]">Loading PR detail...</p>
-    );
-  } else if (selectedPullDetail) {
-    pullRequestDetailContent = (
-      <div className="flex flex-col gap-1 text-[12px]">
-        <p className="font-medium text-black">{selectedPullDetail.pr.title}</p>
-        <p className="text-[#808080]">
-          {selectedPullDetail.pr.head.ref} → {selectedPullDetail.pr.base.ref}
-        </p>
-        <p className="text-[#808080]">
-          +{selectedPullDetail.pr.additions} / -
-          {selectedPullDetail.pr.deletions} ·{" "}
-          {selectedPullDetail.pr.changed_files} files
-        </p>
-        <p className="text-[#808080]">
-          Checks: {selectedPullDetail.check_runs.length}
-        </p>
-      </div>
-    );
-  }
 
   if (!project) {
     return (
@@ -230,7 +228,7 @@ export default function GithubControlsPanel({
             className="h-9 rounded-lg border border-[#dce4de] bg-white px-3 font-mono text-[#111] text-[12px] outline-none focus:border-[#77d79e]"
             onChange={handleBranchNameChange}
             placeholder="feature/my-branch"
-            value={branchNameInput}
+            value={resolvedBranchNameInput}
           />
           <Button
             className="h-9 rounded-lg bg-[#111] text-[12px] text-white hover:bg-[#222]"
@@ -250,7 +248,7 @@ export default function GithubControlsPanel({
             className="h-9 rounded-lg border border-[#dce4de] bg-white px-3 text-[#111] text-[12px] outline-none focus:border-[#77d79e]"
             onChange={handlePrTitleChange}
             placeholder="Pull request title"
-            value={prTitleInput}
+            value={resolvedPrTitleInput}
           />
           <textarea
             className="min-h-20 rounded-lg border border-[#dce4de] bg-white px-3 py-2 text-[#111] text-[12px] outline-none focus:border-[#77d79e]"

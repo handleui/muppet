@@ -1,4 +1,8 @@
-import type { CloudExecutionTarget } from "./execution";
+import type {
+  CloudExecutionTarget,
+  DesktopExecutionTarget,
+  SharedExecutionTarget,
+} from "./execution";
 
 export interface AgentIdRegistry {
   getExistingAgentId: () => Promise<string | null>;
@@ -16,8 +20,10 @@ export interface RuntimeTools {
   cleanup: () => Promise<void>;
 }
 
-export interface ToolLoader {
-  loadTools: (executionTarget: CloudExecutionTarget) => Promise<RuntimeTools>;
+export interface ToolLoader<
+  TExecutionTarget extends SharedExecutionTarget = SharedExecutionTarget,
+> {
+  loadTools: (executionTarget: TExecutionTarget) => Promise<RuntimeTools>;
 }
 
 export interface RuntimeScheduler {
@@ -28,12 +34,16 @@ export interface RuntimeErrorReporter {
   onError: (message: string, error: unknown) => void;
 }
 
-export interface RuntimeAdapter
-  extends AgentIdRegistry,
+export interface RuntimeAdapter<
+  TExecutionTarget extends SharedExecutionTarget = SharedExecutionTarget,
+> extends AgentIdRegistry,
     MessagePersistence,
-    ToolLoader,
+    ToolLoader<TExecutionTarget>,
     RuntimeScheduler,
     RuntimeErrorReporter {}
+
+export type CloudRuntimeAdapter = RuntimeAdapter<CloudExecutionTarget>;
+export type DesktopRuntimeAdapter = RuntimeAdapter<DesktopExecutionTarget>;
 
 export const RESPONSIBILITY_BOUNDARY = {
   worker: {

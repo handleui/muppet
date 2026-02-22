@@ -20,13 +20,13 @@ test("canonicalizeExecutionTarget maps cloud inputs to sandbox", () => {
     canonicalizeExecutionTarget("sandbox"),
     SANDBOX_EXECUTION_TARGET
   );
-  assert.equal(
-    canonicalizeExecutionTarget("default"),
-    SANDBOX_EXECUTION_TARGET
-  );
 });
 
 test("canonicalizeExecutionTarget rejects unsupported targets", () => {
+  assert.throws(
+    () => canonicalizeExecutionTarget("default"),
+    UNSUPPORTED_TARGET_ERROR_RE
+  );
   assert.throws(
     () => canonicalizeExecutionTarget("local"),
     UNSUPPORTED_TARGET_ERROR_RE

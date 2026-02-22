@@ -82,8 +82,6 @@ export interface ScrapeResponse {
 // ── Conversations ──
 
 export type Conversation = typeof conversations.$inferSelect;
-export type ConversationStoredExecutionTarget =
-  (typeof conversations.$inferSelect)["execution_target"];
 export type ConversationExecutionTarget = CloudExecutionTarget;
 
 // ── Projects / Workspaces ──

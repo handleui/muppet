@@ -1,46 +1,11 @@
-"use client";
+import type { Metadata } from "next";
+import SignInPageClient from "./sign-in-page-client";
 
-import { useEffect } from "react";
-import { Github } from "iconoir-react";
-import { useRouter } from "next/navigation";
-import { Button } from "@nosis/ui/button";
-import { authClient } from "@nosis/lib/auth-client";
-import { beginGithubSignIn } from "@nosis/lib/github-session";
+export const metadata: Metadata = {
+  title: "Sign In | Nosis",
+  description: "Sign in to Nosis with GitHub.",
+};
 
 export default function SignInPage() {
-  const { data: session, isPending } = authClient.useSession();
-  const router = useRouter();
-
-  const isAuthenticated = !isPending && !!session;
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.replace("/");
-    }
-  }, [isAuthenticated, router]);
-
-  if (isPending || session) {
-    return (
-      <div className="flex h-dvh items-center justify-center">
-        <p className="text-muted text-sm">Loading...</p>
-      </div>
-    );
-  }
-
-  const handleSignIn = async () => {
-    await beginGithubSignIn(`${window.location.origin}/`);
-  };
-
-  return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-8">
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="font-semibold text-2xl">Nosis</h1>
-        <p className="text-muted text-sm">Sign in to get started</p>
-      </div>
-      <Button className="gap-2" onClick={handleSignIn}>
-        <Github className="size-4" />
-        Sign in with GitHub
-      </Button>
-    </div>
-  );
+  return <SignInPageClient />;
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@nosis/features/shared/api/worker-http-client";
 
 vi.mock("@nosis/features/github/lib/git-ops", () => ({
   buildWorkspaceBranchName: vi.fn().mockReturnValue("nosis/default"),
@@ -8,23 +9,26 @@ vi.mock("@nosis/features/github/lib/git-ops", () => ({
 }));
 
 import {
+  buildWorkspaceBranchName,
   createWorkspaceBranch,
   openPullRequest,
   parseGithubRepoUrl,
 } from "@nosis/features/github/lib/git-ops";
 import {
   createGitWorkspaceRuntime,
+  getGitWorkspaceErrorMessage,
   type GitWorkspaceError,
 } from "@nosis/features/github/lib/git-workspace-runtime";
 
 const mockCreateWorkspaceBranch = vi.mocked(createWorkspaceBranch);
 const mockOpenPullRequest = vi.mocked(openPullRequest);
 const mockParseGithubRepoUrl = vi.mocked(parseGithubRepoUrl);
+const mockBuildWorkspaceBranchName = vi.mocked(buildWorkspaceBranchName);
 
 const project = {
   id: "project-1",
   user_id: "user-1",
-  office_id: null,
+  office_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   repo_url: "https://github.com/acme/repo",
   owner: "acme",
   repo: "repo",
@@ -52,6 +56,7 @@ describe("git workspace runtime behavior", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockParseGithubRepoUrl.mockReturnValue({ owner: "acme", repo: "repo" });
+    mockBuildWorkspaceBranchName.mockReturnValue("nosis/default");
   });
 
   it("rejects ensureRepo when project URL is not a GitHub repo", async () => {
@@ -137,5 +142,63 @@ describe("git workspace runtime behavior", () => {
 
     expect(commitError?.code).toBe("not_supported");
     expect(pushError?.code).toBe("not_supported");
+  });
+
+  it("uses generated defaults when workspace branch/base are missing", async () => {
+    const generatedWorkspace = {
+      ...workspace,
+      working_branch: "",
+      base_branch: "",
+    };
+    mockCreateWorkspaceBranch.mockResolvedValueOnce({
+      name: "nosis/default",
+      commit: { sha: "abc" },
+      protected: false,
+    });
+
+    const runtime = createGitWorkspaceRuntime(generatedWorkspace);
+    await runtime.ensureRepo(project);
+    await runtime.ensureWorkspaceBranch(generatedWorkspace);
+
+    expect(mockCreateWorkspaceBranch).toHaveBeenCalledWith(
+      { owner: "acme", repo: "repo" },
+      {
+        name: "nosis/default",
+        from: "main",
+      }
+    );
+  });
+
+  it("normalizes pull request API conflicts from runtime operations", async () => {
+    mockCreateWorkspaceBranch.mockResolvedValueOnce({
+      name: "feat/runtime",
+      commit: { sha: "abc" },
+      protected: false,
+    });
+    mockOpenPullRequest.mockRejectedValueOnce(
+      new ApiError(422, "Pull request already exists for this branch")
+    );
+
+    const runtime = createGitWorkspaceRuntime(workspace);
+    await runtime.ensureRepo(project);
+    await runtime.ensureWorkspaceBranch(workspace, {
+      name: "feat/runtime",
+      from: "main",
+    });
+
+    await expect(
+      runtime.openPullRequest({
+        title: "WIP",
+        base: "main",
+      })
+    ).rejects.toMatchObject({
+      code: "pull_request_already_exists",
+    });
+  });
+
+  it("returns default unknown message when no error message is available", () => {
+    expect(getGitWorkspaceErrorMessage({ bad: "error-shape" })).toBe(
+      "Git operation failed"
+    );
   });
 });

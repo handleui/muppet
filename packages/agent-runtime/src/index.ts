@@ -11,11 +11,8 @@ import type {
   RuntimeTools,
   ToolLoader,
 } from "./contracts";
-import {
-  createAgent,
-  createProvider,
-  type LettaProvider,
-} from "@nosis/provider";
+import { resolveOrCreateAgentId } from "./agent-id";
+import { createProvider } from "@nosis/provider";
 
 export interface AgentTools extends RuntimeTools {
   tools: ToolSet;
@@ -26,7 +23,7 @@ export interface AgentPersistence extends AgentIdRegistry, MessagePersistence {}
 export interface AgentRuntimeHooks
   extends RuntimeScheduler,
     RuntimeErrorReporter,
-    Omit<ToolLoader, "loadTools"> {
+    Omit<ToolLoader<SandboxExecutionTarget>, "loadTools"> {
   loadTools: (executionTarget: SandboxExecutionTarget) => Promise<AgentTools>;
 }
 
@@ -47,54 +44,6 @@ function formatErrorContext(
     return message;
   }
   return `${message} [${errorContext}]`;
-}
-
-export interface ResolveOrCreateAgentIdInput {
-  provider: LettaProvider;
-  agentSeed: string;
-  getExistingAgentId: () => Promise<string | null>;
-  claimAgentId: (agentId: string) => Promise<boolean>;
-  getWinningAgentId: () => Promise<string | null>;
-  schedule: (task: Promise<void>) => void;
-  onError: (message: string, error: unknown) => void;
-  errorContext?: string;
-}
-
-export async function resolveOrCreateAgentId(
-  input: ResolveOrCreateAgentIdInput
-): Promise<string> {
-  const existing = await input.getExistingAgentId();
-  if (existing) {
-    return existing;
-  }
-
-  const newAgentId = await createAgent(input.provider, input.agentSeed);
-  const claimed = await input.claimAgentId(newAgentId);
-  if (claimed) {
-    return newAgentId;
-  }
-
-  input.schedule(
-    input.provider.client.agents
-      .delete(newAgentId)
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        input.onError(
-          formatErrorContext(
-            "Failed to delete orphan agent",
-            input.errorContext
-          ),
-          error
-        );
-      })
-  );
-
-  const winner = await input.getWinningAgentId();
-  if (!winner) {
-    throw new Error("Failed to resolve agent for conversation");
-  }
-
-  return winner;
 }
 
 export async function streamAgentChat(

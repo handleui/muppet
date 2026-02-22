@@ -14,7 +14,6 @@ import type * as schema from "./schema";
 import type {
   Conversation,
   ConversationExecutionTarget,
-  ConversationStoredExecutionTarget,
   McpServer,
   McpServerScope,
   Message,
@@ -27,7 +26,6 @@ import type {
 
 export type AppDatabase = DrizzleD1Database<typeof schema>;
 export type MessageRole = (typeof messages.$inferInsert)["role"];
-type ConversationWithOfficeId = Conversation & { office_id: string };
 
 export interface UserApiKeyMeta {
   provider: string;
@@ -126,17 +124,8 @@ async function ensureOfficeForUser(
   return office;
 }
 
-async function resolveProjectOfficeId(
-  db: AppDatabase,
-  project: Project,
-  userId: string
-): Promise<string> {
-  if (project.office_id) {
-    return project.office_id;
-  }
-
-  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
-  return fallbackOffice.id;
+function resolveProjectOfficeId(project: Project): string {
+  return project.office_id;
 }
 
 // ── User API Keys ──
@@ -405,9 +394,7 @@ export async function createProject(
   defaultBranch: string | null,
   officeId?: string
 ): Promise<Project> {
-  const resolvedOfficeId = officeId
-    ? (await ensureOfficeForUser(db, userId, officeId)).id
-    : null;
+  const resolvedOfficeId = (await ensureOfficeForUser(db, userId, officeId)).id;
 
   const inserted = await db
     .insert(projects)
@@ -436,9 +423,7 @@ export async function createProject(
     .where(
       and(
         eq(projects.user_id, userId),
-        resolvedOfficeId === null
-          ? isNull(projects.office_id)
-          : eq(projects.office_id, resolvedOfficeId),
+        eq(projects.office_id, resolvedOfficeId),
         eq(projects.repo_url, repoUrl)
       )
     )
@@ -628,82 +613,6 @@ async function getWorkspaceOrNull(
 
 // ── Conversations ──
 
-function normalizeExecutionTarget<
-  T extends { execution_target: ConversationStoredExecutionTarget },
->(
-  row: T
-): Omit<T, "execution_target"> & {
-  execution_target: ConversationExecutionTarget;
-} {
-  if (row.execution_target === "default") {
-    return { ...row, execution_target: "sandbox" };
-  }
-  return {
-    ...row,
-    execution_target: "sandbox",
-  };
-}
-
-async function ensureConversationOfficeId(
-  db: AppDatabase,
-  userId: string,
-  conversationId: string,
-  officeId: string | null
-): Promise<string> {
-  if (officeId) {
-    return officeId;
-  }
-
-  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
-  await db
-    .update(conversations)
-    .set({
-      office_id: fallbackOffice.id,
-      updated_at: sql`datetime('now')`,
-    })
-    .where(
-      and(
-        eq(conversations.id, conversationId),
-        eq(conversations.user_id, userId),
-        isNull(conversations.office_id)
-      )
-    );
-  return fallbackOffice.id;
-}
-
-async function normalizeConversationOffices(
-  db: AppDatabase,
-  userId: string,
-  rows: Conversation[]
-): Promise<ConversationWithOfficeId[]> {
-  const orphanConversationIds = rows
-    .filter((row) => !row.office_id)
-    .map((row) => row.id);
-  if (orphanConversationIds.length === 0) {
-    return rows as ConversationWithOfficeId[];
-  }
-
-  const fallbackOffice = await getOrCreatePersonalOffice(db, userId);
-  await db
-    .update(conversations)
-    .set({
-      office_id: fallbackOffice.id,
-      updated_at: sql`datetime('now')`,
-    })
-    .where(
-      and(
-        eq(conversations.user_id, userId),
-        isNull(conversations.office_id),
-        inArray(conversations.id, orphanConversationIds)
-      )
-    );
-
-  return rows.map((row) => ({
-    ...row,
-    office_id: row.office_id ?? fallbackOffice.id,
-  }));
-}
-
 export async function createConversation(
   db: AppDatabase,
   id: string,
@@ -712,7 +621,7 @@ export async function createConversation(
   executionTarget: ConversationExecutionTarget,
   workspaceId?: string | null,
   officeId?: string
-): Promise<ConversationWithOfficeId> {
+): Promise<Conversation> {
   let resolvedExecutionTarget = executionTarget;
   let resolvedWorkspaceId: string | null = null;
   let resolvedOfficeId: string;
@@ -724,7 +633,7 @@ export async function createConversation(
     }
 
     const project = await getProject(db, workspace.project_id, userId);
-    const projectOfficeId = await resolveProjectOfficeId(db, project, userId);
+    const projectOfficeId = resolveProjectOfficeId(project);
     if (officeId && officeId !== projectOfficeId) {
       throw new HTTPException(400, {
         message:
@@ -757,10 +666,7 @@ export async function createConversation(
       message: "Failed to create conversation",
     });
   }
-  return {
-    ...normalizeExecutionTarget(row),
-    office_id: resolvedOfficeId,
-  };
+  return row;
 }
 
 export async function listConversations(
@@ -771,7 +677,7 @@ export async function listConversations(
   executionTarget?: ConversationExecutionTarget,
   workspaceId?: string,
   officeId?: string
-): Promise<ConversationWithOfficeId[]> {
+): Promise<Conversation[]> {
   if (officeId) {
     await ensureOfficeForUser(db, userId, officeId);
   }
@@ -795,15 +701,14 @@ export async function listConversations(
     .limit(limit)
     .offset(offset);
 
-  const normalizedRows = rows.map((row) => normalizeExecutionTarget(row));
-  return await normalizeConversationOffices(db, userId, normalizedRows);
+  return rows;
 }
 
 export async function getConversation(
   db: AppDatabase,
   id: string,
   userId: string
-): Promise<ConversationWithOfficeId> {
+): Promise<Conversation> {
   const row = await db
     .select()
     .from(conversations)
@@ -813,17 +718,7 @@ export async function getConversation(
   if (!row) {
     notFound("Conversation");
   }
-  const normalizedRow = normalizeExecutionTarget(row);
-  const resolvedOfficeId = await ensureConversationOfficeId(
-    db,
-    userId,
-    normalizedRow.id,
-    normalizedRow.office_id
-  );
-  return {
-    ...normalizedRow,
-    office_id: resolvedOfficeId,
-  };
+  return row;
 }
 
 export async function updateConversationTitle(
@@ -938,7 +833,7 @@ export async function setConversationWorkspace(
   workspaceId: string | null
 ): Promise<void> {
   let nextExecutionTarget: ConversationExecutionTarget | null = null;
-  let nextOfficeId: string | null = null;
+  let nextOfficeId: string | undefined;
   if (workspaceId !== null) {
     const workspace = await getWorkspaceOrNull(db, workspaceId, userId);
     if (!workspace) {
@@ -946,27 +841,20 @@ export async function setConversationWorkspace(
     }
 
     const project = await getProject(db, workspace.project_id, userId);
-    nextOfficeId = await resolveProjectOfficeId(db, project, userId);
+    nextOfficeId = resolveProjectOfficeId(project);
     nextExecutionTarget = "sandbox";
-  } else {
-    const existingConversation = await db
-      .select({ office_id: conversations.office_id })
-      .from(conversations)
-      .where(and(eq(conversations.id, id), eq(conversations.user_id, userId)))
-      .get();
-    if (!existingConversation) {
-      notFound("Conversation");
-    }
-    if (!existingConversation.office_id) {
-      nextOfficeId = (await getOrCreatePersonalOffice(db, userId)).id;
-    }
+  }
+
+  if (nextExecutionTarget !== null && !nextOfficeId) {
+    throw new HTTPException(500, {
+      message: "Failed to resolve workspace office",
+    });
   }
 
   const updateValues =
     nextExecutionTarget === null
       ? {
           workspace_id: workspaceId,
-          ...(nextOfficeId ? { office_id: nextOfficeId } : {}),
           updated_at: sql`datetime('now')`,
         }
       : {
@@ -1055,17 +943,10 @@ export async function getConversationRuntime(
   if (!row) {
     notFound("Conversation");
   }
-  const normalizedRow = normalizeExecutionTarget(row);
-  const resolvedOfficeId = await ensureConversationOfficeId(
-    db,
-    userId,
-    normalizedRow.id,
-    normalizedRow.office_id
-  );
   return {
-    letta_agent_id: normalizedRow.letta_agent_id,
-    execution_target: normalizedRow.execution_target,
-    office_id: resolvedOfficeId,
+    letta_agent_id: row.letta_agent_id,
+    execution_target: row.execution_target,
+    office_id: row.office_id,
   };
 }
 

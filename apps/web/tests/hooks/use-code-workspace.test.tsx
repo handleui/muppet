@@ -36,7 +36,7 @@ const mockListWorkspaces = vi.mocked(listWorkspaces);
 const project = {
   id: "project-1",
   user_id: "user-1",
-  office_id: null,
+  office_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
   repo_url: "https://github.com/acme/repo",
   owner: "acme",
   repo: "repo",

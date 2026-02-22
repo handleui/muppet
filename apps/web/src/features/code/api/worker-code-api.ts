@@ -16,7 +16,7 @@ export interface Office {
 export interface Project {
   id: string;
   user_id: string;
-  office_id: string | null;
+  office_id: string;
   repo_url: string;
   owner: string;
   repo: string;

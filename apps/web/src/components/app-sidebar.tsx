@@ -3,10 +3,10 @@
 import { useCallback, useMemo } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Cube,
   Database,
   FolderPlus,
   GitPullRequest,
-  Internet,
   MessageText,
   NavArrowDown,
   OpenBook,
@@ -109,14 +109,14 @@ function getConversationStats(
 
 function FacehashSquare({ seed }: { seed: string }) {
   return (
-    <div className="size-4 overflow-hidden rounded-[4px]">
+    <div className="size-[18px] overflow-hidden rounded-[4px]">
       <Facehash
         colors={[...FACEHASH_COLORS]}
         intensity3d="subtle"
         interactive={false}
         name={seed}
         showInitial={false}
-        size={16}
+        size={18}
         variant="solid"
       />
     </div>
@@ -160,35 +160,48 @@ function WorkspaceHeader({
   officeSeed: string;
   isCollapsed: boolean;
 }) {
-  return (
-    <div
-      className={`flex h-10 items-center ${
-        isCollapsed ? "justify-center px-2" : "justify-between px-4"
-      }`}
-    >
-      <div className={`flex items-center ${isCollapsed ? "" : "gap-2.5"}`}>
-        <FacehashSquare seed={officeSeed} />
-        {isCollapsed ? null : (
-          <>
-            <p className="text-[13px] text-black tracking-[-0.39px]">
-              Workspace
-            </p>
+  if (isCollapsed) {
+    return (
+      <div className="flex h-10 items-center justify-center px-2">
+        <TooltipRoot>
+          <TooltipTrigger
+            aria-label="Expand sidebar"
+            className="group relative flex size-8 items-center justify-center rounded-[7px] hover:bg-[#f7f7f7]"
+            onClick={onToggleSidebar}
+          >
+            <span className="transition-opacity duration-150 group-hover:opacity-0">
+              <FacehashSquare seed={officeSeed} />
+            </span>
+            <SidebarExpand className="pointer-events-none absolute size-5 text-[#808080] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+          </TooltipTrigger>
+          <TooltipContent
+            className="rounded-none px-2 py-1"
+            side="right"
+            sideOffset={12}
+          >
+            Expand Sidebar
+          </TooltipContent>
+        </TooltipRoot>
+      </div>
+    );
+  }
 
-            <NavArrowDown className="size-3 text-[#808080]" />
-          </>
-        )}
+  return (
+    <div className="flex h-10 items-center justify-between px-4">
+      <div className="flex items-center gap-2">
+        <FacehashSquare seed={officeSeed} />
+        <p className="text-black text-sm tracking-[-0.39px]">Workspace</p>
+        <NavArrowDown className="size-[14px] text-[#808080]" />
       </div>
 
-      {isCollapsed ? null : (
-        <button
-          aria-label="Toggle sidebar"
-          className="flex size-4 items-center justify-center"
-          onClick={onToggleSidebar}
-          type="button"
-        >
-          <SidebarCollapse className="size-4 text-[#808080]" />
-        </button>
-      )}
+      <button
+        aria-label="Toggle sidebar"
+        className="flex size-5 items-center justify-center"
+        onClick={onToggleSidebar}
+        type="button"
+      >
+        <SidebarCollapse className="size-[14px] text-[#808080]" />
+      </button>
     </div>
   );
 }
@@ -207,7 +220,7 @@ function SidebarIcon({
     return <GitPullRequest className={className} />;
   }
   if (item === "integrations") {
-    return <Internet className={className} />;
+    return <Cube className={className} />;
   }
   return <Repeat className={className} />;
 }
@@ -226,12 +239,12 @@ function SidebarButton({
   collapsed?: boolean;
 }) {
   const toneClass = selected ? "text-[#0080ff]" : "text-black";
-  const iconSizeClass = "size-4";
+  const iconSizeClass = "size-[18px]";
   const buttonClass = collapsed
-    ? `flex size-8 items-center justify-center rounded-[12px] ${
+    ? `flex size-8 items-center justify-center rounded-[7px] ${
         selected ? "bg-[#f6fbff]" : "hover:bg-[#f7f7f7]"
       }`
-    : `flex h-8 w-full items-center gap-3 rounded-[8px] px-2 text-left ${
+    : `flex h-9 w-full items-center gap-2 rounded-[7px] px-2 text-left ${
         selected ? "bg-[#f6fbff]" : "hover:bg-[#f7f7f7]"
       }`;
 
@@ -250,7 +263,7 @@ function SidebarButton({
             />
           </TooltipTrigger>
           <TooltipContent
-            className="rounded-[8px] px-2 py-1"
+            className="rounded-none px-2 py-1"
             side="right"
             sideOffset={12}
           >
@@ -273,7 +286,7 @@ function SidebarButton({
           className={`${iconSizeClass} shrink-0 ${toneClass}`}
           item={item}
         />
-        <p className={`text-[13px] tracking-[-0.39px] ${toneClass}`}>{label}</p>
+        <p className={`text-sm tracking-[-0.39px] ${toneClass}`}>{label}</p>
       </button>
     </div>
   );
@@ -292,14 +305,14 @@ function SectionHeader({
   onCreate?: () => void;
   onSelect?: () => void;
 }) {
-  const textClass = `text-xs tracking-[-0.36px] ${
+  const textClass = `text-sm tracking-[-0.36px] ${
     muted ? "text-[#808080]" : "text-black"
   }`;
 
   return (
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-2.5">
-        {showIcon ? <Database className="size-3.5 text-[#808080]" /> : null}
+        {showIcon ? <Database className="size-5 text-[#808080]" /> : null}
         {onSelect ? (
           <button
             className={`${textClass} bg-transparent text-left hover:text-black`}
@@ -316,11 +329,11 @@ function SectionHeader({
       {onCreate ? (
         <button
           aria-label="Create thread"
-          className="flex size-3 items-center justify-center"
+          className="flex size-[14px] items-center justify-center"
           onClick={onCreate}
           type="button"
         >
-          <Plus className="size-3 text-[#808080]" />
+          <Plus className="size-[14px] text-[#808080]" />
         </button>
       ) : null}
     </div>
@@ -508,14 +521,14 @@ export default function AppSidebar({
     return (
       <TooltipProvider>
         <div className="flex size-full flex-col justify-between bg-white">
-          <div className="border-[#f0f0f0] border-b pt-1 pb-2">
+          <div className="border-[#f0f0f0] border-b pt-1 pb-3">
             <WorkspaceHeader
               isCollapsed
               officeSeed={officeSeed}
               onToggleSidebar={onToggleSidebar}
             />
 
-            <div className="mt-1 flex flex-col items-center -space-y-1">
+            <div className="mt-1 flex flex-col items-center -space-y-0.5">
               <SidebarButton
                 collapsed
                 item="habits"
@@ -549,13 +562,13 @@ export default function AppSidebar({
             <TooltipRoot>
               <TooltipTrigger
                 aria-label="Add Project"
-                className="flex size-8 items-center justify-center rounded-[12px] hover:bg-[#f7f7f7]"
+                className="flex size-8 items-center justify-center rounded-[7px] hover:bg-[#f7f7f7]"
                 onClick={handleOpenNewProject}
               >
-                <FolderPlus className="size-4 text-black" />
+                <FolderPlus className="size-[14px] text-black" />
               </TooltipTrigger>
               <TooltipContent
-                className="rounded-[8px] px-2 py-1"
+                className="rounded-none px-2 py-1"
                 side="right"
                 sideOffset={12}
               >
@@ -566,13 +579,13 @@ export default function AppSidebar({
             <TooltipRoot>
               <TooltipTrigger
                 aria-label="Open docs"
-                className="flex size-8 items-center justify-center rounded-[12px] hover:bg-[#f7f7f7]"
+                className="flex size-8 items-center justify-center rounded-[7px] hover:bg-[#f7f7f7]"
                 onClick={handleOpenDocs}
               >
-                <OpenBook className="size-4 text-[#808080]" />
+                <OpenBook className="size-[18px] text-[#808080]" />
               </TooltipTrigger>
               <TooltipContent
-                className="rounded-[8px] px-2 py-1"
+                className="rounded-none px-2 py-1"
                 side="right"
                 sideOffset={12}
               >
@@ -582,21 +595,17 @@ export default function AppSidebar({
 
             <TooltipRoot>
               <TooltipTrigger
-                aria-label="Expand sidebar"
-                className="group relative flex size-8 items-center justify-center rounded-[12px] hover:bg-[#f7f7f7]"
-                onClick={onToggleSidebar}
+                aria-label="Account"
+                className="flex size-8 items-center justify-center rounded-[7px]"
               >
-                <span className="transition-opacity duration-150 group-hover:opacity-0">
-                  <UserAvatarSquare imageUrl={userImage} seed={userSeed} />
-                </span>
-                <SidebarExpand className="pointer-events-none absolute size-4 text-[#808080] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                <UserAvatarSquare imageUrl={userImage} seed={userSeed} />
               </TooltipTrigger>
               <TooltipContent
-                className="rounded-[8px] px-2 py-1"
+                className="rounded-none px-2 py-1"
                 side="right"
                 sideOffset={12}
               >
-                Expand Sidebar
+                Account
               </TooltipContent>
             </TooltipRoot>
           </div>
@@ -608,14 +617,14 @@ export default function AppSidebar({
   return (
     <div className="flex size-full flex-col justify-between bg-white">
       <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="border-[#f0f0f0] border-b pt-1 pb-2">
+        <div className="border-[#f0f0f0] border-b pt-1 pb-3">
           <WorkspaceHeader
             isCollapsed={false}
             officeSeed={officeSeed}
             onToggleSidebar={onToggleSidebar}
           />
 
-          <div className="-space-y-1">
+          <div className="-space-y-0.5">
             <SidebarButton item="habits" label="Habits" selected={false} />
             <SidebarButton
               item="integrations"
@@ -743,19 +752,19 @@ export default function AppSidebar({
           onClick={handleOpenNewProject}
           type="button"
         >
-          <FolderPlus className="size-4 text-black" />
-          <p className="text-black text-xs tracking-[-0.36px]">Add Project</p>
+          <FolderPlus className="size-[14px] text-black" />
+          <p className="text-black text-sm tracking-[-0.36px]">Add Project</p>
         </button>
 
         <div className="flex items-center gap-4">
           <a
             aria-label="Open docs"
-            className="flex size-4 items-center justify-center"
+            className="flex size-5 items-center justify-center"
             href="https://nosis.sh/docs"
             rel="noopener"
             target="_blank"
           >
-            <OpenBook className="size-4 text-[#808080]" />
+            <OpenBook className="size-[18px] text-[#808080]" />
           </a>
 
           <UserAvatarSquare imageUrl={userImage} seed={userSeed} />

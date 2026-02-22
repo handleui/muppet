@@ -177,7 +177,7 @@ Execution target to MCP scopes is currently sandbox-only:
 
 Shared target taxonomy is defined in `@nosis/agent-runtime`:
 
-- cloud/worker: `sandbox` (legacy stored `default` is normalized to `sandbox`)
+- cloud/worker: `sandbox`
 - desktop (planned runtime): `sandbox`, `local`
 
 Current guardrails:
@@ -197,7 +197,7 @@ Actionable ownership boundaries:
   - agent lifecycle and stream orchestration
   - tool loading policy + key/secret resolution
   - office ownership/persistence integrity guarantees
-  - code locations: `apps/worker/src/validate.ts`, `apps/worker/src/chat.ts`, `apps/worker/src/mcp.ts`, `apps/worker/src/db.ts`
+  - code locations: `apps/worker/src/validate.ts`, `apps/worker/src/chat.ts`, `apps/worker/src/runtime-adapter.ts`, `apps/worker/src/mcp.ts`, `apps/worker/src/db.ts`
 - Web owns:
   - route/view semantics (`chat` vs `code`)
   - request shaping and optimistic state
@@ -211,7 +211,7 @@ Actionable ownership boundaries:
   - execution taxonomy (`@nosis/agent-runtime/execution`)
   - runtime adapter contracts (`@nosis/agent-runtime/contracts`)
   - shared agent primitives that are environment-agnostic
-  - code locations: `packages/agent-runtime/src/execution.ts`, `packages/agent-runtime/src/contracts.ts`, `packages/agent-runtime/src/index.ts`
+  - code locations: `packages/agent-runtime/src/execution.ts`, `packages/agent-runtime/src/contracts.ts`, `packages/agent-runtime/src/agent-id.ts`, `packages/agent-runtime/src/index.ts`
 
 Cross-boundary rules:
 
@@ -224,8 +224,9 @@ Cross-boundary rules:
 Primary app tables:
 
 - `projects`
+  - office-owned (`office_id` required)
 - `workspaces`
-- `conversations` (includes `execution_target`, optional `workspace_id`)
+- `conversations` (`execution_target` is sandbox-only, `office_id` is required, `workspace_id` optional)
 - `messages`
 - `mcp_servers`
 - `user_api_keys`
@@ -258,4 +259,5 @@ Portless dev URLs:
 ## Guardrails
 
 - Do not hand-edit Drizzle generated artifacts in `apps/worker/drizzle/**` unless explicitly requested.
+- Import runtime primitives through explicit subpaths (`@nosis/agent-runtime/execution`, `@nosis/agent-runtime/contracts`, `@nosis/agent-runtime/agent-id`) instead of the runtime root package.
 - Keep API-side validation strict (`validate.ts`) and sanitize error surfaces (`sanitize.ts`).

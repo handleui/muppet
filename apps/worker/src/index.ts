@@ -611,11 +611,7 @@ app.post(
       "default_branch",
       255
     );
-    const officeId = await resolveOptionalOfficeId(
-      appDb,
-      userId,
-      body.office_id
-    );
+    const officeId = await resolveOfficeId(appDb, userId, body.office_id);
 
     const existing = await getProjectByRepoUrl(
       appDb,
@@ -952,7 +948,6 @@ app.post(
       lettaApiKey,
       conversationId,
       userId,
-      officeId,
       {
         content,
         messages,

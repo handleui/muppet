@@ -104,9 +104,11 @@ export const projects = sqliteTable(
     user_id: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    office_id: text("office_id").references(() => offices.id, {
-      onDelete: "set null",
-    }),
+    office_id: text("office_id")
+      .notNull()
+      .references(() => offices.id, {
+        onDelete: "cascade",
+      }),
     repo_url: text("repo_url").notNull(),
     owner: text("owner").notNull(),
     repo: text("repo").notNull(),
@@ -171,13 +173,15 @@ export const conversations = sqliteTable(
     title: text("title").notNull().default("New Conversation"),
     letta_agent_id: text("letta_agent_id"),
     execution_target: text("execution_target", {
-      enum: ["default", "sandbox"],
+      enum: ["sandbox"],
     })
       .notNull()
       .default("sandbox"),
-    office_id: text("office_id").references(() => offices.id, {
-      onDelete: "set null",
-    }),
+    office_id: text("office_id")
+      .notNull()
+      .references(() => offices.id, {
+        onDelete: "cascade",
+      }),
     workspace_id: text("workspace_id").references(() => workspaces.id, {
       onDelete: "set null",
     }),

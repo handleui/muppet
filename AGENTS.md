@@ -2,6 +2,12 @@
 
 Tauri 2 desktop AI chat client for macOS. Turborepo monorepo with Rust backend, Svelte frontend (planned), and a Next.js web client.
 
+## Runtime split
+- Web (`apps/web`) owns the app UI and client state.
+- Worker (`apps/worker`) owns auth, persistence, chat, and tool wiring.
+- Desktop (`apps/desktop`) is a thin Tauri host around the web runtime.
+- Shared execution target taxonomy lives in `packages/agent-runtime`.
+
 ## Build
 
 ```bash

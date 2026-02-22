@@ -15,7 +15,7 @@ import {
 
 export interface ResizableGridHandle {
   setWidths: (left: number, right: number, duration?: number) => void;
-  readonly widths: { left: number; right: number };
+  getWidths: () => { left: number; right: number };
 }
 
 interface ResizableGridProps {
@@ -498,7 +498,7 @@ const ResizableGrid = ({
     ref,
     () => ({
       setWidths: animateToWidths,
-      get widths() {
+      getWidths() {
         return widthRef.current;
       },
     }),

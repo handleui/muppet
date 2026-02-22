@@ -59,9 +59,12 @@ test("validateChatMessageCount enforces upper bound", () => {
   assert.throws(() => validateChatMessageCount(201), MESSAGE_COUNT_ERROR_RE);
 });
 
-test("validateExecutionTarget canonicalizes legacy default to sandbox", () => {
+test("validateExecutionTarget enforces sandbox-only inputs", () => {
   assert.equal(validateExecutionTarget("sandbox"), "sandbox");
-  assert.equal(validateExecutionTarget("default"), "sandbox");
+  assert.throws(
+    () => validateExecutionTarget("default"),
+    EXECUTION_TARGET_ERROR_RE
+  );
   assert.throws(
     () => validateExecutionTarget("host"),
     EXECUTION_TARGET_ERROR_RE

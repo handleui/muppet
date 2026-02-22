@@ -13,8 +13,8 @@ import {
 } from "@nosis/components/code-workspace-provider";
 import type { AppShellGridHandle } from "@nosis/components/app-shell-grid";
 
-const LEFT_SIDEBAR_EXPANDED_WIDTH = 325;
-const LEFT_SIDEBAR_MIN_EXPANDED_WIDTH = 240;
+const LEFT_SIDEBAR_EXPANDED_WIDTH = 244;
+const LEFT_SIDEBAR_MIN_EXPANDED_WIDTH = 220;
 const LEFT_SIDEBAR_COLLAPSED_WIDTH = 56;
 const LEFT_SIDEBAR_OPEN_THRESHOLD = LEFT_SIDEBAR_COLLAPSED_WIDTH + 8;
 const CODE_PATH_REGEX = /^\/code\/chat\/([0-9a-f-]+)$/i;
@@ -87,7 +87,7 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
       return;
     }
     const isExpanded =
-      grid.leftWidth > LEFT_SIDEBAR_COLLAPSED_WIDTH + Number.EPSILON;
+      grid.getLeftWidth() > LEFT_SIDEBAR_COLLAPSED_WIDTH + Number.EPSILON;
 
     if (isExpanded) {
       grid.setLeftWidth(LEFT_SIDEBAR_COLLAPSED_WIDTH);
@@ -149,7 +149,7 @@ function AppShellLayoutContent({ children }: { children: ReactNode }) {
             selectedProjectId={selectedProjectId}
           />
         }
-        maxLeft={360}
+        maxLeft={270}
         minLeft={LEFT_SIDEBAR_COLLAPSED_WIDTH}
         minOpenLeft={LEFT_SIDEBAR_MIN_EXPANDED_WIDTH}
         onLeftWidthChange={handleLeftWidthChange}

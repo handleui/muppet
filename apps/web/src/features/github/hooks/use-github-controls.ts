@@ -176,7 +176,15 @@ export function useGithubControls({
     setIsPullDetailLoading(true);
     setError(null);
 
-    fetchPullRequestDetail(repo, selectedPullNumber)
+    const detailRequest = fetchPullRequestDetail(repo, selectedPullNumber);
+    if (!detailRequest || typeof detailRequest.then !== "function") {
+      setError("Failed to load pull request detail");
+      setSelectedPullDetail(null);
+      setIsPullDetailLoading(false);
+      return;
+    }
+
+    detailRequest
       .then((detail) => {
         if (cancelled) {
           return;

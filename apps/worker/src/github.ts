@@ -371,7 +371,15 @@ export async function listUserRepos(
   };
 
   const listPublicOwnerRepos = async (): Promise<GithubRepo[]> => {
-    const user = await githubFetch(token, "/user");
+    let user: unknown;
+    try {
+      user = await githubFetch(token, "/user");
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 403) {
+        return [];
+      }
+      throw error;
+    }
     const userRecord = toRecord(user);
     const login = userRecord?.login;
     if (typeof login !== "string" || login.length === 0) {
@@ -382,10 +390,18 @@ export async function listUserRepos(
     params.set("per_page", perPage);
     params.set("page", page);
     params.set("sort", "updated");
-    const data = await githubFetch(
-      token,
-      `/users/${login}/repos?${params.toString()}`
-    );
+    let data: unknown;
+    try {
+      data = await githubFetch(
+        token,
+        `/users/${login}/repos?${params.toString()}`
+      );
+    } catch (error) {
+      if (error instanceof HTTPException && error.status === 403) {
+        return [];
+      }
+      throw error;
+    }
 
     if (!Array.isArray(data)) {
       badUpstream();
@@ -408,7 +424,6 @@ export async function listUserRepos(
   }
 
   const reposById = new Map<number, GithubRepo>();
-  let sawForbidden = false;
 
   for (const affiliation of affiliationStrategies) {
     let data: unknown;
@@ -416,7 +431,6 @@ export async function listUserRepos(
       data = await githubFetch(token, buildPath(affiliation));
     } catch (error) {
       if (error instanceof HTTPException && error.status === 403) {
-        sawForbidden = true;
         continue;
       }
       throw error;
@@ -438,11 +452,7 @@ export async function listUserRepos(
     );
   }
 
-  if (sawForbidden) {
-    return await listPublicOwnerRepos();
-  }
-
-  return [];
+  return await listPublicOwnerRepos();
 }
 
 export async function listPullRequests(

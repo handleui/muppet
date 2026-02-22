@@ -19,7 +19,7 @@ const clamp = (min: number, value: number, max: number) =>
 
 export interface AppShellGridHandle {
   setLeftWidth: (width: number) => void;
-  readonly leftWidth: number;
+  getLeftWidth: () => number;
 }
 
 interface AppShellGridProps {
@@ -68,7 +68,7 @@ export default function AppShellGrid({
     ref,
     () => ({
       setLeftWidth,
-      get leftWidth() {
+      getLeftWidth() {
         return leftWidthRef.current;
       },
     }),
