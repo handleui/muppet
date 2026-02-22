@@ -7,6 +7,7 @@ import { HTTPException } from "hono/http-exception";
 const MAX_API_KEY_LENGTH = 500;
 const MIN_API_KEY_LENGTH = 8;
 const VALID_PROVIDERS: ReadonlySet<string> = new Set([
+  "daytona",
   "exa",
   "firecrawl",
   "letta",
@@ -403,7 +404,7 @@ function parsePageParam(
   return n;
 }
 
-export type ApiProvider = "exa" | "firecrawl" | "letta";
+export type ApiProvider = "daytona" | "exa" | "firecrawl" | "letta";
 
 export function validateProvider(value: unknown): ApiProvider {
   if (typeof value !== "string" || !VALID_PROVIDERS.has(value)) {
